@@ -70,10 +70,141 @@ class Api:
             "show_sparklines": app_config.SHOW_SPARKLINES,
         })
 
+    def is_setup_complete(self):
+        """Check if setup wizard has been completed."""
+        return not _needs_setup()
+
 
 # ---------------------------------------------------------------------------
 # Build the complete HTML document
 # ---------------------------------------------------------------------------
+
+def _needs_setup():
+    """Check if the first-run setup wizard hasn't been completed."""
+    return (getattr(app_config, "SETUP_COMPLETE", 1) == 0
+            and getattr(app_config, "OBD_MAC", "") == "AA:BB:CC:DD:EE:FF")
+
+
+def _build_setup_html():
+    """Build an HDMI screen guiding the user to complete setup via phone."""
+    theme = app_config.get_theme()
+    accent = theme["accent"]
+    glow = theme["glow"]
+    ssid = getattr(app_config, "HOTSPOT_SSID", "CarPi")
+    password = getattr(app_config, "HOTSPOT_PASSWORD", "carpi1234")
+    ip = getattr(app_config, "HOTSPOT_IP", "192.168.4.1")
+    port = getattr(app_config, "WEB_PORT", 8080)
+    return f"""<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<script>{_TAILWIND_JS}</script>
+<script>
+tailwind.config = {{
+  darkMode: 'class',
+  theme: {{ extend: {{ colors: {{ carpi: {{ bg: '#0a0a0f' }} }} }} }}
+}};
+</script>
+<style>
+  :root {{ --accent: {accent}; --accent-glow: {glow}; }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    background: #0a0a0f; color: #f0f0f5;
+    width: 800px; height: 480px; overflow: hidden; cursor: none;
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }}
+  .accent {{ color: var(--accent); }}
+  .glow {{ text-shadow: 0 0 20px var(--accent-glow); }}
+  .step {{
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 10px 16px; margin: 6px 0;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+  }}
+  .step-num {{
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #0a0a0f;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 0.85rem; flex-shrink: 0;
+    margin-top: 2px;
+  }}
+  .pulse {{
+    animation: pulse 2s ease-in-out infinite;
+  }}
+  @keyframes pulse {{
+    0%, 100% {{ opacity: 1; }}
+    50% {{ opacity: 0.5; }}
+  }}
+</style>
+</head>
+<body>
+
+<div class="text-center mb-6">
+  <div class="text-3xl font-extrabold tracking-widest accent glow mb-1">CARPI</div>
+  <div class="text-sm text-zinc-400">Setup Required</div>
+</div>
+
+<div style="width: 520px;">
+  <div class="step">
+    <div class="step-num">1</div>
+    <div>
+      <div class="text-sm font-semibold">Connect to WiFi</div>
+      <div class="text-xs text-zinc-400 mt-0.5">
+        On your phone, connect to <span class="accent font-bold">{ssid}</span>
+        {"&nbsp;&middot;&nbsp; Password: <span class='font-mono accent'>" + password + "</span>" if password else ""}
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div>
+      <div class="text-sm font-semibold">Open Browser</div>
+      <div class="text-xs text-zinc-400 mt-0.5">
+        Go to <span class="accent font-bold font-mono">{ip}:{port}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div>
+      <div class="text-sm font-semibold">Complete Setup</div>
+      <div class="text-xs text-zinc-400 mt-0.5">
+        Follow the wizard to select your OBD2 adapter and configure WiFi.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mt-6 text-xs text-zinc-600 pulse">Waiting for setup&hellip;</div>
+
+<script>
+  // Poll config to detect when setup completes, then reload to show dashboard
+  async function checkSetup() {{
+    try {{
+      const raw = await window.pywebview.api.get_config();
+      const cfg = JSON.parse(raw);
+      // get_config doesn't return setup_complete, so we use a dedicated method
+      const done = await window.pywebview.api.is_setup_complete();
+      if (done === true || done === 'true') {{
+        window.location.reload();
+      }}
+    }} catch (e) {{}}
+  }}
+  window.addEventListener('pywebviewready', function() {{
+    setInterval(checkSetup, 3000);
+  }});
+</script>
+
+</body>
+</html>"""
+
 
 def _build_html():
     theme = app_config.get_theme()
@@ -665,9 +796,13 @@ def run_display():
     api = Api()
 
     # Register callback so config changes push to the display instantly
-    app_config._on_setting_changed = notify_config_changed
+    app_config._on_setting_changed = _on_setting_changed_handler
 
-    html = _build_html()
+    if _needs_setup():
+        html = _build_setup_html()
+        logger.info("Showing setup guidance screen on HDMI")
+    else:
+        html = _build_html()
 
     _window = webview.create_window(
         "CarPi Dashboard",
@@ -684,15 +819,24 @@ def run_display():
     webview.start(debug=False)
 
 
-def notify_config_changed():
-    """Push a config reload to the pywebview display. Called from config.save_setting()."""
+def _on_setting_changed_handler():
+    """Handle config changes — reload dashboard or switch from setup to dashboard."""
     if _window:
         try:
-            # Wrap in IIFE since reloadConfig is async and evaluate_js can't await
-            _window.evaluate_js("(async()=>{await reloadConfig()})()")
-            logger.debug("Pushed config reload to display")
+            if not _needs_setup():
+                # Setup just completed — load the full dashboard
+                _window.load_html(_build_html())
+                logger.info("Setup complete — switched HDMI to dashboard")
+            else:
+                _window.evaluate_js("(async()=>{await reloadConfig()})()")
+                logger.debug("Pushed config reload to display")
         except Exception as e:
-            logger.warning(f"Failed to push config to display: {e}")
+            logger.warning(f"Failed to update display: {e}")
+
+
+def notify_config_changed():
+    """Push a config reload to the pywebview display. Called from config.save_setting()."""
+    _on_setting_changed_handler()
 
 
 def stop_display():

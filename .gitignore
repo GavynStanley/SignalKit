@@ -26,3 +26,4 @@ logs.txt
 
 # Runtime config overrides (user-specific settings)
 carpi_overrides.json
+carpi-config.json
