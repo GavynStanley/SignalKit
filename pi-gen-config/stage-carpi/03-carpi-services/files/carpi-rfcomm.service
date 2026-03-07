@@ -8,10 +8,10 @@ Before=carpi.service
 [Service]
 Type=oneshot
 # Read OBD_MAC from config — extract it with Python so we don't duplicate it
-ExecStartPre=/bin/bash -c 'OBD_MAC=$(python3 -c "import sys; sys.path.insert(0, \"/opt/carpi\"); import config; print(config.OBD_MAC)"); echo "rfcomm binding MAC: $OBD_MAC"'
+ExecStartPre=/bin/bash -c 'OBD_MAC=$(python3 -c "import sys; sys.path.insert(0, \"/opt/carpi/carpi\"); import config; print(config.OBD_MAC)"); echo "rfcomm binding MAC: $OBD_MAC"'
 ExecStart=/bin/bash -c '\
-    OBD_MAC=$(python3 -c "import sys; sys.path.insert(0, \"/opt/carpi\"); import config; print(config.OBD_MAC)"); \
-    CHANNEL=$(python3 -c "import sys; sys.path.insert(0, \"/opt/carpi\"); import config; print(config.OBD_BT_CHANNEL)"); \
+    OBD_MAC=$(python3 -c "import sys; sys.path.insert(0, \"/opt/carpi/carpi\"); import config; print(config.OBD_MAC)"); \
+    CHANNEL=$(python3 -c "import sys; sys.path.insert(0, \"/opt/carpi/carpi\"); import config; print(config.OBD_BT_CHANNEL)"); \
     rfcomm bind /dev/rfcomm0 "$OBD_MAC" "$CHANNEL" || true'
 
 # Remain active so carpi.service can depend on it

@@ -1,9 +1,6 @@
 {
-  "TIME_24HR": 0,
-  "UNITS_TEMP": "C",
-  "UNITS_SPEED": "mph",
-  "COLOR_THEME": "red",
-  "SHOW_SPARKLINES": 0,
-  "OBD_MAC": "A0:FA:9C:F7:50:16",
-  "OBD_BT_CHANNEL": 1
+  "OBD_MAC": "F4:A3:10:0E:D2:FC",
+  "HOTSPOT_SSID": "CarPi",
+  "HOTSPOT_PASSWORD": "",
+  "SETUP_COMPLETE": 1
 }

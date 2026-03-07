@@ -27,7 +27,7 @@ import time
 import os
 import json
 
-from flask import Flask, Response, jsonify, render_template_string, request
+from flask import Flask, Response, jsonify, redirect, render_template_string, request
 
 import config
 import obd_reader
@@ -41,6 +41,12 @@ app.logger.setLevel(logging.WARNING)
 # Shared HTML head (Tailwind + dark theme config)
 # ---------------------------------------------------------------------------
 SHARED_HEAD = """
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0a0a0f">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-180.svg">
   <script src="/static/tailwind.js"></script>
   <script>
   tailwind.config = {
@@ -87,6 +93,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   """ + SHARED_HEAD + """
 </head>
 <body>
+  <!-- Safety Disclaimer (shown once per device) -->
+  <div id="disclaimer" class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-6" style="display:none">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-sm w-full text-center">
+      <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-amber-500/15 flex items-center justify-center">
+        <svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+      </div>
+      <h2 class="text-lg font-bold mb-2">Drive Safely</h2>
+      <p class="text-sm text-zinc-400 leading-relaxed mb-5">CarPi is for informational purposes only. Do not interact with this device while driving. The driver is responsible for safe vehicle operation at all times.</p>
+      <button onclick="dismissDisclaimer()" class="w-full bg-acc text-white font-bold py-2.5 rounded-xl hover:opacity-90 transition-opacity text-sm">I Understand</button>
+    </div>
+  </div>
+  <script>
+    function dismissDisclaimer() {
+      localStorage.setItem('carpi_disclaimer', '1');
+      document.getElementById('disclaimer').style.display = 'none';
+    }
+    if (!localStorage.getItem('carpi_disclaimer')) {
+      document.getElementById('disclaimer').style.display = 'flex';
+    }
+  </script>
+
   <!-- Header -->
   <div class="flex justify-between items-center px-4 py-2.5 bg-zinc-900 border-b border-zinc-800 sticky top-0 z-50">
     <h1 class="text-sm font-bold tracking-widest flex items-center gap-2">
@@ -138,7 +165,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <!-- Metrics row -->
     <div class="grid grid-cols-{{ layout_metrics|length }} gap-2.5 max-[440px]:grid-cols-2">
       {% for card in layout_metrics %}
-      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-center">
+      <div class="dcard bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-center transition-opacity" data-card="{{ card }}">
         <div class="text-[0.65rem] font-semibold tracking-widest uppercase text-zinc-500 mb-2">{{ cards[card].label }}</div>
         <div class="text-2xl font-bold tabular-nums transition-colors" id="{{ cards[card].val_id }}">{{ cards[card].default }}</div>
         {% if cards[card].unit %}<div class="text-xs text-zinc-500 mt-1">{{ cards[card].unit }}</div>{% endif %}
@@ -151,7 +178,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <!-- Secondary row -->
     <div class="grid grid-cols-{{ layout_slow|length }} gap-2.5 max-[440px]:grid-cols-2">
       {% for card in layout_slow %}
-      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-center">
+      <div class="dcard bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-center transition-opacity" data-card="{{ card }}">
         <div class="text-[0.65rem] font-semibold tracking-widest uppercase text-zinc-500 mb-2">{{ cards[card].label }}</div>
         <div class="text-xl font-bold tabular-nums transition-colors" id="{{ cards[card].val_id }}">{{ cards[card].default }}</div>
         {% if cards[card].unit %}<div class="text-xs text-zinc-500 mt-1">{{ cards[card].unit }}</div>{% endif %}
@@ -170,7 +197,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   <!-- Footer -->
   <div class="text-center py-4 text-xs text-zinc-600 border-t border-zinc-800">
-    CarPi &middot; <a href="/settings" class="text-zinc-400 hover:text-acc">Settings</a> &middot; {{ ip }}:{{ port }}
+    CarPi v{{ version }} &middot; <a href="/settings" class="text-zinc-400 hover:text-acc">Settings</a> &middot; {{ ip }}:{{ port }}
   </div>
 
   <script>
@@ -180,6 +207,34 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     const UNITS_SPEED = '{{ units_speed }}';
     const UNITS_TEMP = '{{ units_temp }}';
     let pollTimer = null;
+
+    // PID support detection — fade unsupported cards after connection
+    const _pidMap = {
+      coolant: 'coolant_temp', battery: 'battery_voltage', throttle: 'throttle',
+      load: 'engine_load', iat: 'intake_air_temp', oil: 'oil_temp',
+      fuel_trim: 'short_fuel_trim_1', mpg: 'mpg'
+    };
+    const _pidSeen = {};
+    let _connUpdates = 0;
+    function checkPidSupport(d) {
+      if (!d.connected) { _connUpdates = 0; return; }
+      _connUpdates++;
+      for (const [card, key] of Object.entries(_pidMap)) {
+        if (d[key] !== null && d[key] !== undefined) _pidSeen[card] = true;
+      }
+      if (_connUpdates >= 8) {
+        document.querySelectorAll('.dcard').forEach(el => {
+          const id = el.dataset.card;
+          if (id && !_pidSeen[id]) {
+            el.style.opacity = '0.3';
+            const valEl = el.querySelector('[id^="val-"]');
+            if (valEl && valEl.textContent === '---') valEl.textContent = 'N/A';
+          } else if (id) {
+            el.style.opacity = '1';
+          }
+        });
+      }
+    }
 
     function fmt(val, dec=0, fb='---') {
       return (val === null || val === undefined) ? fb : Number(val).toFixed(dec);
@@ -194,6 +249,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     function applyData(d) {
+      checkPidSupport(d);
+
       const dot = document.getElementById('status-dot');
       dot.style.background = d.connected ? '#22c55e' : '#ef4444';
       dot.style.boxShadow = d.connected ? '0 0 6px #22c55e' : 'none';
@@ -501,7 +558,7 @@ SETTINGS_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="text-center py-4 text-xs text-zinc-600 border-t border-zinc-800">
-    CarPi &middot; <a href="/" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
+    CarPi v{{ version }} &middot; <a href="/" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
   </div>
 
   <script>
@@ -774,7 +831,7 @@ UPDATE_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="text-center py-4 text-xs text-zinc-600 border-t border-zinc-800">
-    CarPi &middot; <a href="/" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
+    CarPi v{{ version }} &middot; <a href="/" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
   </div>
 
   <script>
@@ -830,6 +887,11 @@ UPDATE_HTML = """<!DOCTYPE html>
           banner.textContent = 'Update installed! Restarting CarPi...';
           addLog('Restarting CarPi service...', 'text-emerald-400');
           setTimeout(() => { window.location.reload(); }, 6000);
+        } else if (result.status === 'reboot_required') {
+          banner.className = 'mt-3.5 p-3 rounded-xl text-sm font-semibold bg-amber-500/10 border border-amber-500/20 text-amber-400';
+          banner.textContent = 'Update staged — Pi is rebooting to apply it. This takes about 30 seconds.';
+          addLog('Disabling read-only filesystem...', 'text-amber-400');
+          addLog('Rebooting to apply update...', 'text-amber-400');
         } else if (result.status === 'up_to_date') {
           banner.className = 'mt-3.5 p-3 rounded-xl text-sm font-semibold bg-zinc-800 border border-zinc-700 text-zinc-400';
           banner.textContent = 'Already up to date.';
@@ -955,7 +1017,7 @@ DIAGNOSTICS_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="text-center py-4 text-xs text-zinc-600 border-t border-zinc-800">
-    CarPi &middot; <a href="/" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
+    CarPi v{{ version }} &middot; <a href="/" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
   </div>
 
   <script>
@@ -1018,6 +1080,358 @@ DIAGNOSTICS_HTML = """<!DOCTYPE html>
 
 
 # ---------------------------------------------------------------------------
+# Setup Wizard HTML (first-run experience)
+# ---------------------------------------------------------------------------
+
+SETUP_HTML = """<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CarPi Setup</title>
+""" + SHARED_HEAD + """
+  <style>
+    .step { display: none; }
+    .step.active { display: block; }
+    .fade-in { animation: fadeIn 0.4s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .pulse-dot { animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="max-w-md mx-auto px-5 py-8">
+
+    <!-- Step 1: Welcome -->
+    <div class="step active fade-in" data-step="1">
+      <div class="text-center mb-8">
+        <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-acc/15 flex items-center justify-center">
+          <svg class="w-8 h-8 text-acc" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+        <h1 class="text-2xl font-bold mb-2">Welcome to CarPi</h1>
+        <p class="text-sm text-zinc-400 leading-relaxed">Let's set up your OBD2 dashboard. This takes about a minute.</p>
+      </div>
+      <div class="space-y-3 mb-8">
+        <div class="flex items-center gap-3 bg-zinc-900 border border-zinc-800 rounded-xl p-3.5">
+          <div class="w-8 h-8 rounded-lg bg-acc/15 flex items-center justify-center shrink-0"><span class="text-sm font-bold text-acc">1</span></div>
+          <div><div class="text-sm font-medium">Connect your OBD2 adapter</div><div class="text-xs text-zinc-500">Scan for nearby Bluetooth devices</div></div>
+        </div>
+        <div class="flex items-center gap-3 bg-zinc-900 border border-zinc-800 rounded-xl p-3.5">
+          <div class="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0"><span class="text-sm font-bold text-zinc-500">2</span></div>
+          <div><div class="text-sm font-medium">Set WiFi password</div><div class="text-xs text-zinc-500">Secure your CarPi network</div></div>
+        </div>
+        <div class="flex items-center gap-3 bg-zinc-900 border border-zinc-800 rounded-xl p-3.5">
+          <div class="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0"><span class="text-sm font-bold text-zinc-500">3</span></div>
+          <div><div class="text-sm font-medium">You're ready</div><div class="text-xs text-zinc-500">Start driving with live data</div></div>
+        </div>
+      </div>
+      <button onclick="goStep(2)" class="w-full bg-acc text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity">Get Started</button>
+    </div>
+
+    <!-- Step 2: Bluetooth Scan -->
+    <div class="step fade-in" data-step="2">
+      <div class="mb-6">
+        <div class="text-xs font-semibold text-acc uppercase tracking-wider mb-1">Step 1 of 2</div>
+        <h2 class="text-xl font-bold mb-1">Find Your OBD2 Adapter</h2>
+        <p class="text-sm text-zinc-400">Plug the adapter into your car's OBD2 port, then tap Scan.</p>
+      </div>
+
+      <button onclick="setupBtScan()" id="setup-scan-btn"
+        class="w-full bg-zinc-900 border border-zinc-800 text-white font-semibold py-3 rounded-xl hover:border-zinc-700 transition-all flex items-center justify-center gap-2 mb-4">
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>
+        Scan for Devices
+      </button>
+
+      <div id="setup-scanning" class="hidden flex items-center justify-center gap-2 py-6 text-sm text-zinc-400">
+        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+        Scanning for Bluetooth devices...
+      </div>
+
+      <div id="setup-devices" class="space-y-1.5 mb-4"></div>
+
+      <div id="setup-bt-error" class="hidden text-xs text-zinc-500 text-center py-4"></div>
+
+      <div class="flex gap-2 mt-4">
+        <button onclick="goStep(1)" class="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-400 font-semibold py-3 rounded-xl hover:text-white transition-colors">Back</button>
+        <button onclick="goStep(3)" id="setup-next-2" disabled
+          class="flex-1 bg-acc text-white font-bold py-3 rounded-xl transition-opacity disabled:opacity-30">Next</button>
+      </div>
+    </div>
+
+    <!-- Step 3: WiFi Password -->
+    <div class="step fade-in" data-step="3">
+      <div class="mb-6">
+        <div class="text-xs font-semibold text-acc uppercase tracking-wider mb-1">Step 2 of 2</div>
+        <h2 class="text-xl font-bold mb-1">Secure Your WiFi</h2>
+        <p class="text-sm text-zinc-400">Set a password for the CarPi WiFi network, or leave blank to keep it open.</p>
+      </div>
+
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-3">
+        <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Network Name</label>
+        <input type="text" id="setup-ssid" value="{{ ssid }}"
+          class="w-full bg-black/30 border border-zinc-700 text-zinc-100 text-sm p-2.5 rounded-lg mt-1.5 focus:outline-none focus:border-acc">
+      </div>
+
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-6">
+        <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Password</label>
+        <input type="text" id="setup-wifi-pass" placeholder="Leave blank for open network"
+          class="w-full bg-black/30 border border-zinc-700 text-zinc-100 text-sm p-2.5 rounded-lg mt-1.5 focus:outline-none focus:border-acc">
+        <div class="text-xs text-zinc-500 mt-1.5">Must be 8+ characters if set.</div>
+      </div>
+
+      <div class="flex gap-2">
+        <button onclick="goStep(2)" class="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-400 font-semibold py-3 rounded-xl hover:text-white transition-colors">Back</button>
+        <button onclick="finishSetup()" id="setup-finish-btn"
+          class="flex-1 bg-acc text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity">Finish Setup</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Done -->
+    <div class="step fade-in" data-step="4">
+      <div class="text-center py-8">
+        <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-emerald-500/15 flex items-center justify-center">
+          <svg class="w-8 h-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        </div>
+        <h2 class="text-2xl font-bold mb-2">You're All Set!</h2>
+        <p class="text-sm text-zinc-400 leading-relaxed mb-6">CarPi is configured and ready. Start your engine to see live data.</p>
+        <div id="setup-summary" class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-6 text-left space-y-2">
+          <div class="flex justify-between text-sm"><span class="text-zinc-500">Adapter</span><span class="font-mono" id="summary-mac">--</span></div>
+          <div class="flex justify-between text-sm"><span class="text-zinc-500">WiFi</span><span id="summary-wifi">--</span></div>
+        </div>
+        <div class="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 mb-6" id="setup-reboot-notice" class="hidden">
+          CarPi will restart to apply your settings. This takes about 15 seconds.
+        </div>
+        <a href="/" class="block w-full bg-acc text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity text-center">Open Dashboard</a>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let selectedMac = null;
+
+    function goStep(n) {
+      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+      const step = document.querySelector('[data-step="' + n + '"]');
+      if (step) step.classList.add('active');
+    }
+
+    async function setupBtScan() {
+      const btn = document.getElementById('setup-scan-btn');
+      const spinner = document.getElementById('setup-scanning');
+      const list = document.getElementById('setup-devices');
+      const errDiv = document.getElementById('setup-bt-error');
+
+      btn.disabled = true;
+      btn.classList.add('opacity-50');
+      spinner.classList.remove('hidden');
+      list.innerHTML = '';
+      errDiv.classList.add('hidden');
+
+      try {
+        const resp = await fetch('/api/bt-scan', { method: 'POST' });
+        const data = await resp.json();
+        spinner.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+
+        if (!data.ok || data.devices.length === 0) {
+          errDiv.textContent = data.error || 'No devices found. Make sure your OBD2 adapter is plugged in and powered on.';
+          errDiv.classList.remove('hidden');
+          return;
+        }
+
+        list.innerHTML = data.devices.map(d => `
+          <button onclick="selectAdapter('${d.mac}','${d.name.replace(/'/g, "\\\\'")}')" data-mac="${d.mac}"
+            class="w-full flex items-center gap-2.5 bg-black/30 border border-zinc-700 rounded-xl px-3.5 py-3 text-left transition-all hover:border-zinc-500">
+            <svg class="w-5 h-5 text-zinc-600 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium truncate">${d.name}</div>
+              <div class="text-xs font-mono text-zinc-500">${d.mac}</div>
+            </div>
+          </button>
+        `).join('');
+      } catch(e) {
+        spinner.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+        errDiv.textContent = 'Network error during scan.';
+        errDiv.classList.remove('hidden');
+      }
+    }
+
+    function selectAdapter(mac, name) {
+      selectedMac = mac;
+      document.querySelectorAll('#setup-devices button').forEach(b => {
+        if (b.dataset.mac === mac) {
+          b.className = b.className.replace('border-zinc-700', 'border-acc bg-acc/10');
+          b.querySelector('svg').className = 'w-5 h-5 text-acc shrink-0';
+        } else {
+          b.className = b.className.replace('border-acc bg-acc/10', 'border-zinc-700');
+          b.querySelector('svg').className = 'w-5 h-5 text-zinc-600 shrink-0';
+        }
+      });
+      document.getElementById('setup-next-2').disabled = false;
+    }
+
+    async function finishSetup() {
+      const btn = document.getElementById('setup-finish-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      const ssid = document.getElementById('setup-ssid').value.trim();
+      const pass = document.getElementById('setup-wifi-pass').value;
+
+      // Validate WiFi password
+      if (pass && pass.length < 8) {
+        alert('WiFi password must be at least 8 characters.');
+        btn.disabled = false;
+        btn.textContent = 'Finish Setup';
+        return;
+      }
+
+      // Save all settings
+      const settings = {};
+      if (selectedMac) settings['OBD_MAC'] = selectedMac;
+      if (ssid) settings['HOTSPOT_SSID'] = ssid;
+      settings['HOTSPOT_PASSWORD'] = pass;
+      settings['SETUP_COMPLETE'] = '1';
+
+      try {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settings),
+        });
+
+        // Show summary
+        document.getElementById('summary-mac').textContent = selectedMac || 'Not set';
+        document.getElementById('summary-wifi').textContent = pass ? ssid + ' (secured)' : ssid + ' (open)';
+        goStep(4);
+
+        // Trigger restart
+        setTimeout(() => fetch('/api/restart', { method: 'POST' }), 2000);
+      } catch(e) {
+        btn.disabled = false;
+        btn.textContent = 'Finish Setup';
+        alert('Failed to save settings. Please try again.');
+      }
+    }
+  </script>
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
+# About HTML
+# ---------------------------------------------------------------------------
+
+ABOUT_HTML = """<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>About CarPi</title>
+""" + SHARED_HEAD + """
+</head>
+<body>
+  <!-- Header -->
+  <div class="flex justify-between items-center px-4 py-2.5 bg-zinc-900 border-b border-zinc-800 sticky top-0 z-50">
+    <h1 class="text-sm font-bold tracking-widest flex items-center gap-2">
+      <span class="w-2 h-2 bg-acc rounded-full shadow-[0_0_8px_var(--accent)]"></span>CARPI
+    </h1>
+    <nav class="flex gap-0.5 bg-zinc-800 rounded-lg p-0.5">
+      <a href="/" class="text-xs font-semibold px-3 py-1 rounded-md text-zinc-400 hover:text-white">Dashboard</a>
+      <a href="/settings" class="text-xs font-semibold px-3 py-1 rounded-md text-zinc-400 hover:text-white">Settings</a>
+      <a href="/about" class="text-xs font-semibold px-3 py-1 rounded-md bg-acc text-white">About</a>
+    </nav>
+  </div>
+
+  <div class="max-w-md mx-auto px-4 py-6 space-y-4">
+
+    <!-- Logo + Version -->
+    <div class="text-center py-4">
+      <div class="w-20 h-20 mx-auto mb-4 rounded-2xl bg-acc/10 border border-acc/20 flex items-center justify-center">
+        <svg class="w-10 h-10 text-acc" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      </div>
+      <h1 class="text-xl font-bold">CarPi</h1>
+      <p class="text-sm text-zinc-500 mt-1">Version {{ version }}</p>
+    </div>
+
+    <!-- Info -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+      <div class="flex justify-between text-sm">
+        <span class="text-zinc-500">Version</span>
+        <span class="font-mono">{{ version }}</span>
+      </div>
+      <div class="flex justify-between text-sm">
+        <span class="text-zinc-500">WiFi Network</span>
+        <span>{{ ssid }}</span>
+      </div>
+      <div class="flex justify-between text-sm">
+        <span class="text-zinc-500">Dashboard</span>
+        <span class="font-mono">{{ ip }}:{{ port }}</span>
+      </div>
+    </div>
+
+    <!-- What is CarPi -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+      <h2 class="text-sm font-bold mb-2">What is CarPi?</h2>
+      <p class="text-xs text-zinc-400 leading-relaxed">
+        CarPi is a real-time OBD2 vehicle dashboard built for Raspberry Pi. It connects to your car's
+        diagnostic port via Bluetooth, displays live engine data on an HDMI screen, and serves a
+        mobile-friendly dashboard to your phone over WiFi.
+      </p>
+    </div>
+
+    <!-- Safety -->
+    <div class="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
+      <h2 class="text-sm font-bold text-amber-400 mb-2">Safety Notice</h2>
+      <p class="text-xs text-zinc-400 leading-relaxed">
+        CarPi is for informational purposes only. Do not interact with this device while driving.
+        The driver is solely responsible for safe vehicle operation at all times. Data displayed may
+        not be accurate — always rely on your vehicle's factory gauges for critical information.
+      </p>
+    </div>
+
+    <!-- Legal -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+      <h2 class="text-sm font-bold mb-2">Legal</h2>
+      <p class="text-xs text-zinc-400 leading-relaxed">
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. IN NO EVENT SHALL THE
+        AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF
+        THIS SOFTWARE. Use at your own risk.
+      </p>
+    </div>
+
+    <!-- Links -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-2">
+      <a href="/update" class="flex items-center justify-between py-1.5 text-sm text-zinc-300 hover:text-acc transition-colors">
+        <span>Check for Updates</span>
+        <svg class="w-4 h-4 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      </a>
+      <a href="/diagnostics" class="flex items-center justify-between py-1.5 text-sm text-zinc-300 hover:text-acc transition-colors border-t border-zinc-800">
+        <span>Connection Diagnostics</span>
+        <svg class="w-4 h-4 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      </a>
+      <a href="/setup" class="flex items-center justify-between py-1.5 text-sm text-zinc-300 hover:text-acc transition-colors border-t border-zinc-800">
+        <span>Run Setup Wizard Again</span>
+        <svg class="w-4 h-4 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      </a>
+    </div>
+
+  </div>
+
+  <div class="text-center py-4 text-xs text-zinc-600 border-t border-zinc-800">
+    CarPi v{{ version }} &middot; <a href="/" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
+  </div>
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
 # Group settings for display in the settings page
 # ---------------------------------------------------------------------------
 
@@ -1031,6 +1445,7 @@ _GROUPS = {
     "BATTERY_CRITICAL_V": "Warning Thresholds",
     "RPM_REDLINE": "Warning Thresholds",
     "HOTSPOT_SSID": "WiFi Hotspot",
+    "HOTSPOT_PASSWORD": "WiFi Hotspot",
     "TIME_24HR": "Display",
     "UNITS_SPEED": "Display",
     "UNITS_TEMP": "Display",
@@ -1054,6 +1469,8 @@ _TAB_LABELS = {
 
 def _build_settings_context() -> tuple[dict, list]:
     raw = config.get_current_settings()
+    # Filter out hidden settings (e.g. SETUP_COMPLETE)
+    raw = {k: v for k, v in raw.items() if not v.get("hidden")}
     for key in raw:
         raw[key]["group"] = _GROUPS.get(key, "General")
     ordered = dict(sorted(raw.items(), key=lambda kv: (_GROUPS.get(kv[0], ""), kv[0])))
@@ -1140,8 +1557,52 @@ def _git_info() -> dict:
         return {"hash": "error", "branch": str(e), "date": "N/A"}
 
 
+def _is_overlayfs() -> bool:
+    """Check if the root filesystem is an overlayfs (read-only SD card protection)."""
+    try:
+        r = subprocess.run(["mount"], capture_output=True, text=True, timeout=5)
+        for line in r.stdout.splitlines():
+            if " / " in line and "overlay" in line:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _disable_overlayfs() -> tuple[bool, str]:
+    """Temporarily disable overlayfs so git pull persists to SD card.
+    Uses raspi-config noninteractive mode. Requires a reboot to take effect,
+    so we do: disable overlay -> reboot -> pull -> enable overlay -> reboot."""
+    try:
+        r = subprocess.run(
+            ["sudo", "raspi-config", "nonint", "disable_overlayfs"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode == 0:
+            return True, "Overlayfs disabled — reboot required"
+        return False, r.stderr.strip() or "raspi-config failed"
+    except Exception as e:
+        return False, str(e)
+
+
+def _enable_overlayfs() -> tuple[bool, str]:
+    """Re-enable overlayfs after a persistent update."""
+    try:
+        r = subprocess.run(
+            ["sudo", "raspi-config", "nonint", "enable_overlayfs"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode == 0:
+            return True, "Overlayfs re-enabled — reboot required"
+        return False, r.stderr.strip() or "raspi-config failed"
+    except Exception as e:
+        return False, str(e)
+
+
 def _git_pull() -> dict:
     steps = []
+    overlay_active = _is_overlayfs()
+
     try:
         r = subprocess.run(["git", "fetch", "--all"], cwd=_APP_DIR, capture_output=True, text=True, timeout=30)
         steps.append({"cmd": "git fetch --all", "output": r.stdout.strip(), "error": r.stderr.strip()})
@@ -1151,6 +1612,26 @@ def _git_pull() -> dict:
         steps.append({"cmd": "git status -uno", "output": r.stdout.strip(), "error": ""})
         if "Your branch is up to date" in r.stdout:
             return {"status": "up_to_date", "steps": steps}
+
+        if overlay_active:
+            # Overlayfs is on — disable it, schedule a reboot so the pull
+            # happens on next boot against the real filesystem.
+            ok, msg = _disable_overlayfs()
+            steps.append({"cmd": "disable_overlayfs", "output": msg, "error": "" if ok else msg})
+            if not ok:
+                return {"status": "error", "error": f"Cannot persist update: {msg}", "steps": steps}
+            # Write a flag file so main.py knows to pull + re-enable on next boot
+            flag = os.path.join(_APP_DIR, ".ota-pending")
+            try:
+                with open(flag, "w") as f:
+                    f.write("pull\n")
+                steps.append({"cmd": "write .ota-pending", "output": "Flag written", "error": ""})
+            except Exception:
+                pass
+            return {"status": "reboot_required", "steps": steps,
+                    "message": "Update ready — the Pi will reboot to apply it."}
+
+        # No overlay — pull directly
         r = subprocess.run(["git", "pull", "--ff-only"], cwd=_APP_DIR, capture_output=True, text=True, timeout=60)
         steps.append({"cmd": "git pull --ff-only", "output": r.stdout.strip(), "error": r.stderr.strip()})
         if r.returncode != 0:
@@ -1166,8 +1647,94 @@ def _git_pull() -> dict:
 # Routes
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Captive portal detection — redirect phones to dashboard on WiFi connect
+# ---------------------------------------------------------------------------
+
+@app.route("/generate_204")
+@app.route("/gen_204")
+def captive_android():
+    """Android captive portal check."""
+    return redirect("/")
+
+
+@app.route("/hotspot-detect.html")
+@app.route("/library/test/success.html")
+def captive_apple():
+    """Apple captive portal check — must return non-success HTML to trigger popup."""
+    return redirect("/")
+
+
+@app.route("/connecttest.txt")
+def captive_windows():
+    """Windows captive portal check."""
+    return redirect("/")
+
+
+@app.route("/redirect")
+@app.route("/ncsi.txt")
+def captive_misc():
+    """Misc captive portal checks."""
+    return redirect("/")
+
+
+@app.route("/manifest.json")
+def pwa_manifest():
+    accent = config.get_theme()["accent"]
+    manifest = {
+        "name": "CarPi Dashboard",
+        "short_name": "CarPi",
+        "description": "Real-time OBD2 vehicle dashboard",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0a0a0f",
+        "theme_color": accent,
+        "icons": [
+            {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"},
+        ],
+    }
+    return jsonify(manifest)
+
+
+@app.route("/icon.svg")
+@app.route("/icon-180.svg")
+def pwa_icon():
+    accent = config.get_theme()["accent"]
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <rect width="180" height="180" rx="40" fill="#0a0a0f"/>
+  <circle cx="90" cy="90" r="50" fill="none" stroke="{accent}" stroke-width="6" opacity="0.3"/>
+  <circle cx="90" cy="90" r="30" fill="none" stroke="{accent}" stroke-width="4" opacity="0.5"/>
+  <circle cx="90" cy="90" r="8" fill="{accent}"/>
+  <path d="M90 55 L90 40" stroke="{accent}" stroke-width="4" stroke-linecap="round"/>
+  <path d="M90 140 L90 125" stroke="{accent}" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+  <path d="M55 90 L40 90" stroke="{accent}" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+  <path d="M140 90 L125 90" stroke="{accent}" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+  <path d="M90 90 L110 65" stroke="{accent}" stroke-width="3" stroke-linecap="round"/>
+</svg>'''
+    return Response(svg, mimetype="image/svg+xml")
+
+
+def _needs_setup() -> bool:
+    """Check if the setup wizard should be shown."""
+    return not config.SETUP_COMPLETE and config.OBD_MAC == "AA:BB:CC:DD:EE:FF"
+
+
+@app.route("/setup")
+def setup_page():
+    return render_template_string(
+        SETUP_HTML,
+        ip=config.HOTSPOT_IP,
+        port=config.WEB_PORT,
+        ssid=config.HOTSPOT_SSID,
+        accent_hex=config.get_theme()["accent"],
+        version=config.APP_VERSION,
+    )
+
+
 @app.route("/")
 def index():
+    if _needs_setup():
+        return redirect("/setup")
     return render_template_string(
         DASHBOARD_HTML,
         ip=config.HOTSPOT_IP,
@@ -1181,6 +1748,7 @@ def index():
         layout_slow=config.LAYOUT_SLOW,
         cards=_card_registry(config.UNITS_TEMP),
         accent_hex=config.get_theme()["accent"],
+        version=config.APP_VERSION,
     )
 
 
@@ -1217,6 +1785,7 @@ def settings_page():
         all_card_ids=_ALL_CARD_IDS,
         list_settings_json=json.dumps(list(config._LIST_SETTINGS)),
         accent_hex=config.get_theme()["accent"],
+        version=config.APP_VERSION,
     )
 
 
@@ -1227,6 +1796,7 @@ def update_page():
         ip=config.HOTSPOT_IP,
         port=config.WEB_PORT,
         accent_hex=config.get_theme()["accent"],
+        version=config.APP_VERSION,
     )
 
 
@@ -1237,6 +1807,19 @@ def diagnostics_page():
         ip=config.HOTSPOT_IP,
         port=config.WEB_PORT,
         accent_hex=config.get_theme()["accent"],
+        version=config.APP_VERSION,
+    )
+
+
+@app.route("/about")
+def about_page():
+    return render_template_string(
+        ABOUT_HTML,
+        ip=config.HOTSPOT_IP,
+        port=config.WEB_PORT,
+        ssid=config.HOTSPOT_SSID,
+        accent_hex=config.get_theme()["accent"],
+        version=config.APP_VERSION,
     )
 
 
@@ -1407,6 +1990,12 @@ def api_update_post():
             logger.info("Restarting CarPi after OTA update")
             os.system("sudo systemctl restart carpi 2>/dev/null || sudo kill -SIGTERM 1")
         threading.Thread(target=_do_restart, daemon=True).start()
+    elif result["status"] == "reboot_required":
+        def _do_reboot():
+            time.sleep(2.0)
+            logger.info("Rebooting Pi to apply OTA update (overlayfs toggle)")
+            os.system("sudo reboot")
+        threading.Thread(target=_do_reboot, daemon=True).start()
     return jsonify(result)
 
 

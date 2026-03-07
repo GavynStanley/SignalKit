@@ -14,30 +14,46 @@
 echo "==> [02-carpi-app] Installing CarPi application"
 
 CARPI_DEST="${ROOTFS_DIR}/opt/carpi"
+CARPI_REPO="https://github.com/GavynStanley/CarPi.git"
 
 # ---------------------------------------------------------------------------
-# 1. Copy application source files into the image
+# 1. Clone the CarPi repo into the image (enables OTA updates via git pull)
 # ---------------------------------------------------------------------------
 install -d "${CARPI_DEST}"
 
-# The app source lives at ../../carpi/ relative to this stage directory.
-# In the pi-gen build, STAGE_DIR points to this stage's directory, so:
-APP_SRC="$(dirname "$(dirname "${STAGE_DIR}")")/carpi"
-
-if [[ -d "${APP_SRC}" ]]; then
-    cp -r "${APP_SRC}/." "${CARPI_DEST}/"
-    echo "Copied CarPi source from ${APP_SRC}"
+# Try cloning the repo so the Pi has a .git directory for OTA updates.
+# Fall back to copying source files if git clone fails (offline build).
+if git clone --depth=1 "${CARPI_REPO}" "${CARPI_DEST}.tmp" 2>/dev/null; then
+    # Move only the carpi/ subdirectory contents into /opt/carpi,
+    # but keep .git at the repo root level so git pull works
+    rm -rf "${CARPI_DEST}"
+    mv "${CARPI_DEST}.tmp" "${CARPI_DEST}"
+    echo "Cloned CarPi repo from ${CARPI_REPO}"
 else
-    # Fallback: copy from the files/ directory bundled with this stage
-    # (used when building from a self-contained pi-gen-config archive)
-    cp -r files/carpi/. "${CARPI_DEST}/"
-    echo "Copied CarPi source from stage files/"
+    echo "Git clone failed (offline?) — falling back to file copy"
+    # Replicate the repo layout: /opt/carpi/ is the repo root,
+    # /opt/carpi/carpi/ holds the app code, /opt/carpi/VERSION, etc.
+    REPO_ROOT="$(dirname "$(dirname "${STAGE_DIR}")")"
+    APP_SRC="${REPO_ROOT}/carpi"
+
+    if [[ -d "${APP_SRC}" ]]; then
+        install -d "${CARPI_DEST}/carpi"
+        cp -r "${APP_SRC}/." "${CARPI_DEST}/carpi/"
+        # Copy repo-root files (VERSION, etc.) if they exist
+        [[ -f "${REPO_ROOT}/VERSION" ]] && cp "${REPO_ROOT}/VERSION" "${CARPI_DEST}/"
+        echo "Copied CarPi source from ${APP_SRC} -> ${CARPI_DEST}/carpi/"
+    else
+        install -d "${CARPI_DEST}/carpi"
+        cp -r files/carpi/. "${CARPI_DEST}/carpi/"
+        echo "Copied CarPi source from stage files/ -> ${CARPI_DEST}/carpi/"
+    fi
+    echo "WARNING: OTA updates will not work without a git repo"
 fi
 
 # Set ownership — app runs as pi user
 on_chroot << 'EOF'
 chown -R pi:pi /opt/carpi
-chmod +x /opt/carpi/main.py
+chmod +x /opt/carpi/carpi/main.py 2>/dev/null || chmod +x /opt/carpi/main.py 2>/dev/null || true
 EOF
 
 echo "CarPi installed to /opt/carpi"

@@ -1,0 +1,38 @@
+[Unit]
+Description=CarPi WiFi hotspot configuration
+Before=hostapd.service
+After=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '\
+    SSID=$(python3 -c "import sys; sys.path.insert(0, \"/opt/carpi/carpi\"); import config; print(config.HOTSPOT_SSID)"); \
+    PASS=$(python3 -c "import sys; sys.path.insert(0, \"/opt/carpi/carpi\"); import config; print(config.HOTSPOT_PASSWORD)"); \
+    CONF="/etc/hostapd/hostapd.conf"; \
+    echo "interface=wlan0" > "$CONF"; \
+    echo "driver=nl80211" >> "$CONF"; \
+    echo "ssid=$SSID" >> "$CONF"; \
+    echo "hw_mode=g" >> "$CONF"; \
+    echo "channel=6" >> "$CONF"; \
+    echo "ignore_broadcast_ssid=0" >> "$CONF"; \
+    echo "wmm_enabled=0" >> "$CONF"; \
+    echo "macaddr_acl=0" >> "$CONF"; \
+    if [ -n "$PASS" ] && [ ${#PASS} -ge 8 ]; then \
+        echo "auth_algs=1" >> "$CONF"; \
+        echo "wpa=2" >> "$CONF"; \
+        echo "wpa_passphrase=$PASS" >> "$CONF"; \
+        echo "wpa_key_mgmt=WPA-PSK" >> "$CONF"; \
+        echo "wpa_pairwise=TKIP" >> "$CONF"; \
+        echo "rsn_pairwise=CCMP" >> "$CONF"; \
+        echo "WiFi secured with WPA2 (SSID: $SSID)"; \
+    else \
+        echo "auth_algs=1" >> "$CONF"; \
+        echo "WiFi open (SSID: $SSID)"; \
+    fi'
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=carpi-wifi
+
+[Install]
+WantedBy=multi-user.target

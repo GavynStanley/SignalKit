@@ -41,6 +41,9 @@ logger = logging.getLogger("main")
 # Import project modules (after logging is configured)
 # ---------------------------------------------------------------------------
 
+import os
+import subprocess
+
 import config
 import obd_reader
 import web_server
@@ -88,7 +91,63 @@ def start_web_server() -> threading.Thread:
     return thread
 
 
+def _check_ota_pending():
+    """If an OTA update was staged before reboot, apply it now.
+
+    The flow is:
+      1. User hits Update on web UI while overlayfs is active
+      2. web_server disables overlayfs and writes .ota-pending flag
+      3. Pi reboots (now running without overlayfs — writes persist)
+      4. This function runs on boot, sees the flag, does git pull
+      5. Re-enables overlayfs and reboots one final time
+    """
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    flag = os.path.join(app_dir, ".ota-pending")
+    if not os.path.exists(flag):
+        return
+
+    logger.info("=" * 60)
+    logger.info("OTA UPDATE PENDING — applying now")
+    logger.info("=" * 60)
+
+    try:
+        os.remove(flag)
+    except OSError:
+        pass
+
+    # Pull latest code
+    try:
+        r = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=app_dir, capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode == 0:
+            logger.info(f"git pull succeeded: {r.stdout.strip()}")
+        else:
+            logger.error(f"git pull failed: {r.stderr.strip()}")
+    except Exception as e:
+        logger.error(f"git pull error: {e}")
+
+    # Re-enable overlayfs
+    try:
+        subprocess.run(
+            ["sudo", "raspi-config", "nonint", "enable_overlayfs"],
+            capture_output=True, text=True, timeout=15,
+        )
+        logger.info("Overlayfs re-enabled")
+    except Exception as e:
+        logger.error(f"Failed to re-enable overlayfs: {e}")
+
+    # Reboot to activate overlayfs with the updated code
+    logger.info("Rebooting to finalize update...")
+    time.sleep(2)
+    os.system("sudo reboot")
+    sys.exit(0)
+
+
 def main():
+    _check_ota_pending()
+
     logger.info("=" * 60)
     logger.info("CarPi Dashboard Starting")
     logger.info(f"  Screen:     {config.SCREEN_WIDTH}x{config.SCREEN_HEIGHT}")

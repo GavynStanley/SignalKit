@@ -11,9 +11,9 @@ Requires=carpi-rfcomm.service
 Type=simple
 User=pi
 Group=pi
-WorkingDirectory=/opt/carpi
+WorkingDirectory=/opt/carpi/carpi
 
-ExecStart=/usr/bin/python3 /opt/carpi/main.py
+ExecStart=/usr/bin/python3 /opt/carpi/carpi/main.py
 
 # Restart on crash — critical for an always-on embedded device
 Restart=always

@@ -31,4 +31,17 @@ systemctl enable carpi-rfcomm.service
 echo "carpi-rfcomm.service enabled"
 EOF
 
+# ---------------------------------------------------------------------------
+# WiFi hotspot configuration service
+# ---------------------------------------------------------------------------
+# Regenerates hostapd.conf from config.py on each boot so WiFi SSID/password
+# changes made via the web UI take effect.
+install -m 644 files/carpi-wifi.service \
+    "${ROOTFS_DIR}/etc/systemd/system/carpi-wifi.service"
+
+on_chroot << 'EOF'
+systemctl enable carpi-wifi.service
+echo "carpi-wifi.service enabled"
+EOF
+
 echo "==> [03-carpi-services] Services installed"

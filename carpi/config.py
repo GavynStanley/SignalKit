@@ -19,6 +19,16 @@ import sys
 
 _logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Version — read from VERSION file at repo root
+# ---------------------------------------------------------------------------
+_VERSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
+try:
+    with open(_VERSION_FILE) as _f:
+        APP_VERSION = _f.read().strip()
+except FileNotFoundError:
+    APP_VERSION = "dev"
+
 # Callback invoked after a setting is saved. Set by display.py at startup.
 _on_setting_changed = None
 
@@ -48,9 +58,12 @@ OBD_BT_CHANNEL = 1               # RFCOMM channel (most ELM327 adapters use 1)
 
 # --- WiFi Hotspot ---
 HOTSPOT_SSID = "CarPi"
-HOTSPOT_PASSWORD = ""            # Leave empty for open network, or set a password
+HOTSPOT_PASSWORD = "carpi1234"   # Default WiFi password (change in setup wizard or settings)
 HOTSPOT_IP = "192.168.4.1"
 HOTSPOT_INTERFACE = "wlan0"
+
+# --- First-Run ---
+SETUP_COMPLETE = 0               # Set to 1 after setup wizard completes
 
 # --- Web Server ---
 WEB_PORT = 8080
@@ -238,6 +251,21 @@ EDITABLE_SETTINGS = {
         "type": "str",
         "restart": False,
         "description": "Comma-separated card IDs (up to 3): coolant, battery, throttle, load, iat, oil, fuel_trim, mpg",
+    },
+    "HOTSPOT_PASSWORD": {
+        "label": "WiFi Password",
+        "type": "str",
+        "restart": True,
+        "description": "Leave blank for an open network. Must be 8+ characters if set.",
+    },
+    "SETUP_COMPLETE": {
+        "label": "Setup Complete",
+        "type": "select",
+        "options": [("1", "Yes"), ("0", "No")],
+        "cast": "int",
+        "restart": False,
+        "description": "Reset to No to show the setup wizard again.",
+        "hidden": True,
     },
 }
 
