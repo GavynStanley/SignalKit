@@ -19,6 +19,27 @@ echo "carpi.service enabled"
 EOF
 
 # ---------------------------------------------------------------------------
+# X11 display server service
+# ---------------------------------------------------------------------------
+# pywebview uses GTK + WebKit which requires X11. This minimal Xorg service
+# starts a framebuffer-only X server with no window manager — CarPi renders
+# fullscreen via pywebview on top of it.
+install -m 644 files/carpi-x11.service \
+    "${ROOTFS_DIR}/etc/systemd/system/carpi-x11.service"
+
+on_chroot << 'EOF'
+systemctl enable carpi-x11.service
+echo "carpi-x11.service enabled"
+EOF
+
+# Allow pi user to start X without root
+install -d "${ROOTFS_DIR}/etc/X11"
+cat > "${ROOTFS_DIR}/etc/X11/Xwrapper.config" << 'EOF'
+allowed_users=anybody
+needs_root_rights=yes
+EOF
+
+# ---------------------------------------------------------------------------
 # Bluetooth rfcomm bind helper service
 # ---------------------------------------------------------------------------
 # rfcomm bind must be run each boot before the carpi app starts.

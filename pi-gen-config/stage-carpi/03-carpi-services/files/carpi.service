@@ -2,10 +2,10 @@
 Description=CarPi OBD2 Dashboard
 Documentation=file:///opt/carpi/README.md
 
-# Start after Bluetooth is ready and the rfcomm bind has run
-After=network.target bluetooth.target carpi-rfcomm.service hostapd.service dnsmasq.service
+# Start after X11 is running, Bluetooth is ready, and rfcomm is bound
+After=network.target bluetooth.target carpi-rfcomm.service carpi-x11.service hostapd.service dnsmasq.service
 Wants=bluetooth.target hostapd.service dnsmasq.service
-Requires=carpi-rfcomm.service
+Requires=carpi-rfcomm.service carpi-x11.service
 
 [Service]
 Type=simple
@@ -19,15 +19,14 @@ ExecStart=/usr/bin/python3 /opt/carpi/carpi/main.py
 Restart=always
 RestartSec=5
 
-# Kivy display: use DRM/KMS backend directly, no X11 required
-Environment=KIVY_BCM_DISPMANX_ID=2
-Environment=DISPLAY=
+# X11 display for pywebview/GTK/WebKit rendering
+Environment=DISPLAY=:0
 
 # Unbuffered Python output so logs appear in journalctl in real time
 Environment=PYTHONUNBUFFERED=1
 
 # Groups needed: video (framebuffer), bluetooth (rfcomm), dialout (/dev/rfcomm0)
-SupplementaryGroups=video bluetooth dialout
+SupplementaryGroups=video bluetooth dialout render input
 
 # Kill cleanly on systemctl stop
 TimeoutStopSec=10

@@ -163,6 +163,39 @@ log "This will take 20-60 minutes depending on your machine."
 log "Downloading Debian packages + building the full OS image."
 echo ""
 
+# ---------------------------------------------------------------------------
+# Build output filter — suppress noisy package download/install logs.
+# Shows: stage transitions, errors, our echo statements, and key milestones.
+# Full log is always saved to build.log for troubleshooting.
+# ---------------------------------------------------------------------------
+BUILD_LOG="${SCRIPT_DIR}/build.log"
+: > "${BUILD_LOG}"
+
+# Filter function: only print lines that matter
+_build_filter() {
+    while IFS= read -r line; do
+        echo "${line}" >> "${BUILD_LOG}"
+        # Always show these patterns
+        case "${line}" in
+            *"==> ["*|*"[stage"*|*"Begin "*|*"End "*|*"SKIP"*|\
+            *"error"*|*"Error"*|*"ERROR"*|*"FATAL"*|*"FAIL"*|\
+            *"WARNING"*|*"warning:"*|\
+            *"==> "*|*"[build]"*|\
+            *"export-image"*|*"Compressing"*|*"compress"*|\
+            *"Image"*|*".img"*|*".zip"*|\
+            *"installed"*|*"done"*|*"Done"*|*"complete"*|*"Complete"*|\
+            *"Removing"*|*"cleanup"*|*"Package cleanup"*|\
+            *"systemctl"*|*"enable"*|*"disable"*|\
+            *"rename"*|*"User rename"*|\
+            *"overlayfs"*|*"overlay"*|\
+            *"Running stage"*|*"Skipping stage"*|\
+            *"mount"*|*"umount"*)
+                log "${line}"
+                ;;
+        esac
+    done
+}
+
 BUILD_START=$(date +%s)
 
 if [[ ${USE_DOCKER} -eq 1 ]]; then
@@ -170,7 +203,8 @@ if [[ ${USE_DOCKER} -eq 1 ]]; then
     command -v docker &>/dev/null || err "Docker not found. Install Docker first."
 
     cd "${PIGEN_DIR}"
-    sudo bash build-docker.sh
+    sudo bash build-docker.sh 2>&1 | _build_filter
+    BUILD_EXIT=${PIPESTATUS[0]}
 else
     log "Using native build (Linux)"
 
@@ -191,8 +225,11 @@ else
     fi
 
     cd "${PIGEN_DIR}"
-    sudo bash build.sh -c "${CONFIG}"
+    sudo bash build.sh -c "${CONFIG}" 2>&1 | _build_filter
+    BUILD_EXIT=${PIPESTATUS[0]}
 fi
+
+[[ ${BUILD_EXIT} -ne 0 ]] && err "Build failed (exit code ${BUILD_EXIT}). Full log: ${BUILD_LOG}"
 
 BUILD_END=$(date +%s)
 BUILD_MINS=$(( (BUILD_END - BUILD_START) / 60 ))

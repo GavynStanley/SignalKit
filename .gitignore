@@ -31,4 +31,8 @@ carpi-config.json
 # pi-gen build artifacts (vendored pi-gen source is tracked, build output is not)
 pi-gen/work/
 pi-gen/deploy/
+pi-gen/stage-carpi
+pi-gen/*/SKIP_IMAGES
+pi-gen/config
 deploy/
+build.log

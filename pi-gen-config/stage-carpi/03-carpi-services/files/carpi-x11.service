@@ -1,0 +1,33 @@
+[Unit]
+Description=CarPi X11 Display Server
+Documentation=file:///opt/carpi/README.md
+After=systemd-user-sessions.service
+
+# Only start if there's a display device
+ConditionPathExists=/dev/fb0
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+# Start a minimal X server on vt1 with no access control
+# -nocursor hides the mouse cursor (touchscreen/no-mouse kiosk)
+ExecStart=/usr/bin/X :0 -nolisten tcp -nocursor vt1
+Restart=always
+RestartSec=3
+
+SupplementaryGroups=video render input tty
+
+# Allow X to access the TTY
+StandardInput=tty
+StandardOutput=null
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+
+SyslogIdentifier=carpi-x11
+
+[Install]
+WantedBy=multi-user.target

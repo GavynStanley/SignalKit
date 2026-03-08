@@ -36,8 +36,12 @@ echo "==> [04-carpi-readonly] Configuring read-only filesystem (overlayfs)"
 # At boot, systemd mounts a tmpfs overlay over the root filesystem so all
 # writes go to RAM and are discarded on shutdown, protecting the SD card.
 
-CMDLINE_FILE="${ROOTFS_DIR}/boot/firmware/cmdline.txt"
-[[ -f "${ROOTFS_DIR}/boot/cmdline.txt" ]] && CMDLINE_FILE="${ROOTFS_DIR}/boot/cmdline.txt"
+# Prefer /boot/firmware/ (bookworm+), fall back to /boot/ (legacy)
+if [[ -f "${ROOTFS_DIR}/boot/firmware/cmdline.txt" ]]; then
+    CMDLINE_FILE="${ROOTFS_DIR}/boot/firmware/cmdline.txt"
+elif [[ -f "${ROOTFS_DIR}/boot/cmdline.txt" ]]; then
+    CMDLINE_FILE="${ROOTFS_DIR}/boot/cmdline.txt"
+fi
 
 if [[ -f "${CMDLINE_FILE}" ]]; then
     CMDLINE=$(cat "${CMDLINE_FILE}" | tr -d '\n')
