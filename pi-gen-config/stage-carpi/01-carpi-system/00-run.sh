@@ -186,6 +186,14 @@ systemctl enable hostapd
 systemctl enable dnsmasq
 EOF
 
+# Override hostapd to wait for carpi-wifi (interface + IP must be ready)
+install -d "${ROOTFS_DIR}/etc/systemd/system/hostapd.service.d"
+cat > "${ROOTFS_DIR}/etc/systemd/system/hostapd.service.d/wait-for-wifi.conf" << 'EOF'
+[Unit]
+Requires=carpi-wifi.service
+After=carpi-wifi.service
+EOF
+
 # ---------------------------------------------------------------------------
 # 7. Boot configuration — HDMI display settings
 # ---------------------------------------------------------------------------

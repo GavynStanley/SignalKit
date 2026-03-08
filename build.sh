@@ -187,8 +187,9 @@ if [[ ${CLEAN} -eq 1 ]]; then
 elif [[ ${CLEAN_CARPI} -eq 1 ]]; then
     step "Cleaning stage-carpi only (stages 0-2 cached)"
     sudo rm -f "${PIGEN_DIR}/work/stage-carpi/SKIP"
+    sudo rm -f "${PIGEN_DIR}/work/export-image/SKIP"
     sudo rm -rf "${PIGEN_DIR}/deploy"
-    log "Removed stage-carpi SKIP marker — it will re-run"
+    log "Removed stage-carpi + export-image SKIP markers — both will re-run"
 fi
 
 # ---------------------------------------------------------------------------
@@ -247,7 +248,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/deploy"
 sudo mkdir -p "${OUTPUT_DIR}"
 
 # Find the generated image(s) and copy to our deploy/ directory
-IMAGES=$(find "${DEPLOY_DIR}" -name "*.img.zip" -o -name "*.img" 2>/dev/null | sort)
+IMAGES=$(find "${DEPLOY_DIR}" -name "*.zip" -o -name "*.img" 2>/dev/null | sort)
 
 if [[ -z "${IMAGES}" ]]; then
     err "No image found in ${DEPLOY_DIR} — build may have failed"

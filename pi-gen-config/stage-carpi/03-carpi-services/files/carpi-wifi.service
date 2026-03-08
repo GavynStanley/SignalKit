@@ -1,10 +1,13 @@
 [Unit]
 Description=CarPi WiFi hotspot configuration
 Before=hostapd.service dnsmasq.service
-After=network-pre.target
+After=network-pre.target sys-subsystem-net-devices-wlan0.device
+Wants=sys-subsystem-net-devices-wlan0.device
 
 [Service]
 Type=oneshot
+# Ensure NetworkManager has released wlan0 (it reads unmanaged config on reload)
+ExecStartPre=/bin/bash -c 'command -v nmcli >/dev/null && nmcli device set wlan0 managed no 2>/dev/null || true'
 ExecStartPre=/sbin/ip link set wlan0 up
 ExecStartPre=/bin/bash -c '/sbin/ip addr show wlan0 | grep -q 192.168.4.1 || /sbin/ip addr add 192.168.4.1/24 dev wlan0'
 ExecStart=/bin/bash -c '\
