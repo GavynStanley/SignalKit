@@ -1108,8 +1108,15 @@ SETUP_HTML = """<!DOCTYPE html>
     <!-- Step 1: Welcome -->
     <div class="step active fade-in" data-step="1">
       <div class="text-center mb-8">
-        <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-acc/15 flex items-center justify-center">
-          <svg class="w-8 h-8 text-acc" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        <div class="mx-auto mb-5 flex justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="12 14 220 42" width="240" height="48">
+            <rect x="16" y="44" width="6" height="8" rx="2" fill="#DC2626" opacity="0.32"/>
+            <rect x="25" y="38" width="6" height="14" rx="2" fill="#DC2626" opacity="0.55"/>
+            <rect x="34" y="30" width="6" height="22" rx="2" fill="#DC2626" opacity="0.78"/>
+            <rect x="43" y="20" width="6" height="32" rx="2" fill="#DC2626"/>
+            <text x="60" y="44" font-family="'Arial Black','Helvetica Neue',sans-serif" font-weight="800" font-size="32" letter-spacing="-0.5" fill="#ffffff">Signal</text>
+            <text x="178" y="44" font-family="'Arial Black','Helvetica Neue',sans-serif" font-weight="800" font-size="32" letter-spacing="-0.5" fill="#DC2626">Kit</text>
+          </svg>
         </div>
         <h1 class="text-2xl font-bold mb-2">Welcome to SignalKit</h1>
         <p class="text-sm text-zinc-400 leading-relaxed">Let's set up your OBD2 dashboard. This takes about a minute.</p>

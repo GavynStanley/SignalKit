@@ -36,3 +36,6 @@ pi-gen/*/SKIP_IMAGES
 pi-gen/config
 deploy/
 build.log
+
+# ignore mobile app for now
+mobile

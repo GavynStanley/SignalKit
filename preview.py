@@ -14,7 +14,7 @@ import math
 import time
 import os
 
-# Point imports at the carpi/ source directory
+# Point imports at the signalkit/ source directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "signalkit"))
 
 # ── Patch config before display imports it ──────────────────────────────────

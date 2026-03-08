@@ -1,4 +1,4 @@
-# CarPi — Raspberry Pi OBD2 Car Dashboard
+# SignalKit — Raspberry Pi OBD2 Car Dashboard
 
 A custom Raspberry Pi OS image that boots directly into a real-time car dashboard. No desktop, no login, no setup required beyond flashing the SD card. Built with **pi-gen**, the official Raspberry Pi OS build tool.
 
@@ -22,9 +22,10 @@ Connects to your car's OBD2 port via a Bluetooth ELM327 adapter and displays liv
 - **Runtime settings** — change theme colors, units, warning thresholds, polling intervals, and more from the web UI
 - **Safety disclaimer** — one-time acknowledgment overlay on first web visit
 - **Read-only filesystem** (overlayfs) — survives hard power cuts with no SD card corruption
-- **Color themes** — blue, red, green, purple, orange, cyan, pink
+- **Color themes** — red, blue, green, purple, orange, cyan, pink
 - **Warning alerts** — color-coded overheat, low battery, and redline indicators
 - **Kia extended PIDs** — oil temperature via manufacturer-specific PID 2101
+- **Dev console** — send raw OBD/ELM327 commands for debugging
 
 ---
 
@@ -44,14 +45,14 @@ Connects to your car's OBD2 port via a Bluetooth ELM327 adapter and displays liv
 ### 1. Build the OS image
 
 ```bash
-git clone https://github.com/GavynStanley/CarPi.git
-cd CarPi
+git clone https://github.com/GavynStanley/SignalKit.git
+cd SignalKit
 chmod +x build.sh
 ./build.sh              # Linux (native)
 ./build.sh --docker     # macOS/Windows (via Docker)
 ```
 
-Build takes 20-60 minutes. Output: `deploy/CarPi-YYYY-MM-DD.img.zip`
+Build takes 20-60 minutes. Output: `deploy/SignalKit-YYYY-MM-DD.img.zip`
 
 ### 2. Flash to SD card
 
@@ -59,14 +60,14 @@ Use **Raspberry Pi Imager**: Choose OS > Use Custom > select the `.img.zip`
 
 Or with `dd`:
 ```bash
-unzip -p deploy/CarPi-*.img.zip | sudo dd of=/dev/sdX bs=4M status=progress
+unzip -p deploy/SignalKit-*.img.zip | sudo dd of=/dev/sdX bs=4M status=progress
 ```
 
 ### 3. Boot and set up
 
 1. Insert SD card into the Pi and power on
 2. The HDMI display shows a setup screen with WiFi credentials
-3. Connect your phone to the **CarPi** WiFi (default password: `carpi1234`)
+3. Connect your phone to the **SignalKit** WiFi (default password: `signalkit1234`)
 4. A setup wizard opens automatically — select your OBD2 Bluetooth adapter and configure WiFi
 5. The dashboard starts automatically after setup
 
@@ -77,7 +78,7 @@ unzip -p deploy/CarPi-*.img.zip | sudo dd of=/dev/sdX bs=4M status=progress
 ```
 build.sh                         # Build script — produces the flashable .img
 VERSION                          # App version (read by config.py)
-carpi/                           # The dashboard application
+signalkit/                       # The dashboard application
 |-- main.py                      # Entry point — starts all subsystems
 |-- config.py                    # Settings, defaults, runtime overrides
 |-- obd_reader.py                # OBD2 polling thread
@@ -94,22 +95,25 @@ carpi/                           # The dashboard application
 
 pi-gen-config/
 |-- config                       # pi-gen build settings
-+-- stage-carpi/                 # Custom OS stage
-    |-- 00-carpi-packages/
++-- stage-signalkit/             # Custom OS stage
+    |-- 00-signalkit-packages/
     |   +-- 00-packages          # apt packages
-    |-- 01-carpi-system/
+    |-- 01-signalkit-system/
     |   |-- 00-run.sh            # Bluetooth, WiFi hotspot, display, boot config
     |   +-- files/               # hostapd.conf, dnsmasq.conf, plymouth theme, etc.
-    |-- 02-carpi-app/
-    |   +-- 00-run.sh            # Clones repo to /opt/carpi, installs pip deps
-    |-- 03-carpi-services/
+    |-- 02-signalkit-app/
+    |   +-- 00-run.sh            # Clones repo to /opt/signalkit, installs pip deps
+    |-- 03-signalkit-services/
     |   |-- 00-run.sh            # Enables systemd services
     |   +-- files/
-    |       |-- carpi.service         # Main app service
-    |       |-- carpi-rfcomm.service  # Bluetooth serial bind
-    |       +-- carpi-wifi.service    # WiFi hotspot config + static IP
-    +-- 04-carpi-readonly/
-        +-- 00-run.sh            # Enables overlayfs read-only root
+    |       |-- signalkit.service         # Main app service
+    |       |-- signalkit-rfcomm.service  # Bluetooth serial bind
+    |       |-- signalkit-wifi.service    # WiFi hotspot config + static IP
+    |       +-- signalkit-x11.service     # X11 display server
+    |-- 04-signalkit-readonly/
+    |   +-- 00-run.sh            # Enables overlayfs read-only root
+    +-- 05-signalkit-fixperms/
+        +-- 00-run.sh            # Fixes file ownership (QEMU build artifact)
 ```
 
 ---
@@ -128,15 +132,14 @@ pi-gen-config/
 ### Build options
 
 ```bash
-./build.sh                # Native Linux build
-./build.sh --docker       # Docker build (macOS/Windows)
-./build.sh --clean        # Full clean rebuild
-./build.sh --clean-carpi  # Re-run only CarPi stage (keeps base OS cached)
+./build.sh                    # Native Linux build
+./build.sh --docker           # Docker build (macOS/Windows)
+./build.sh --clean            # Full clean rebuild
+./build.sh --clean-signalkit  # Re-run only SignalKit stage (keeps base OS cached)
 ```
 
 The build script automatically:
-- Clones pi-gen
-- Links the custom stage
+- Links the custom stage into pi-gen
 - Installs build dependencies (on Linux)
 - Skips desktop/app stages (3-5)
 - Produces a compressed `.img.zip`
@@ -146,13 +149,13 @@ The build script automatically:
 You do **not** need to set the MAC address before building. The first-boot setup wizard will scan for Bluetooth devices and let you select your adapter. If you prefer to bake it in:
 
 ```python
-# carpi/config.py
+# signalkit/config.py
 OBD_MAC = "AA:BB:CC:DD:EE:FF"   # Replace with your adapter's MAC
 ```
 
 ---
 
-## Using CarPi
+## Using SignalKit
 
 ### HDMI Display
 
@@ -170,7 +173,7 @@ Warning colors: green = normal, amber = caution, red = action needed.
 
 ### Mobile Web Dashboard
 
-1. Connect to the **CarPi** WiFi network (default password: `carpi1234`)
+1. Connect to the **SignalKit** WiFi network (default password: `signalkit1234`)
 2. A captive portal page should open automatically
 3. If not, open `http://192.168.4.1:8080` in your browser
 
@@ -179,11 +182,12 @@ The web UI includes:
 - **Settings** — change units, themes, thresholds, polling intervals, WiFi password
 - **Update** — OTA update from GitHub (handles overlayfs automatically)
 - **Diagnostics** — view active DTCs
+- **Dev** — raw OBD/ELM327 command console
 - **About** — version info, legal notices
 
 ### Settings
 
-All settings are changeable at runtime via the web UI at `/settings`. Changes are saved to `/boot/firmware/carpi-config.json` (the FAT32 boot partition, always writable even with overlayfs). Available settings:
+All settings are changeable at runtime via the web UI at `/settings`. Changes are saved to `/boot/firmware/signalkit-config.json` (the FAT32 boot partition, always writable even with overlayfs). Available settings:
 
 - OBD2 adapter (Bluetooth scanner)
 - Warning thresholds (overheat temp, low battery voltage, RPM redline)
@@ -199,7 +203,7 @@ All settings are changeable at runtime via the web UI at `/settings`. Changes ar
 
 ## OTA Updates
 
-CarPi can update itself from GitHub without reflashing the SD card.
+SignalKit can update itself from GitHub without reflashing the SD card.
 
 From the web UI, go to the **Update** page. If the root filesystem uses overlayfs (default), the update flow is:
 
@@ -218,10 +222,11 @@ This takes two reboots and is fully automated once you hit the update button.
 ```
 Power on
   -> Plymouth boot splash
-  -> systemd starts carpi-rfcomm.service (binds Bluetooth serial)
-  -> systemd starts carpi-wifi.service (configures WiFi AP + static IP)
+  -> systemd starts signalkit-x11.service (X11 display server)
+  -> systemd starts signalkit-rfcomm.service (binds Bluetooth serial)
+  -> systemd starts signalkit-wifi.service (configures WiFi AP + static IP)
   -> systemd starts hostapd + dnsmasq (WiFi hotspot + DHCP)
-  -> systemd starts carpi.service
+  -> systemd starts signalkit.service
      -> main.py
         -> OBD2 reader thread (polls ELM327 adapter)
         -> Flask web server thread (port 8080)
@@ -238,12 +243,12 @@ Power on
 
 ### Bluetooth
 
-The Veepeak adapter uses classic Bluetooth SPP (Serial Port Profile). The `carpi-rfcomm.service` runs `rfcomm bind` on boot to create `/dev/rfcomm0`, which python-OBD uses as a serial port.
+The Veepeak adapter uses classic Bluetooth SPP (Serial Port Profile). The `signalkit-rfcomm.service` runs `rfcomm bind` on boot to create `/dev/rfcomm0`, which python-OBD uses as a serial port.
 
 ### WiFi Hotspot
 
 - `NetworkManager` is configured to ignore `wlan0`
-- `carpi-wifi.service` assigns a static IP (`192.168.4.1`) and writes `hostapd.conf` from config.py
+- `signalkit-wifi.service` assigns a static IP (`192.168.4.1`) and writes `hostapd.conf` from config.py
 - `hostapd` runs the access point; `dnsmasq` provides DHCP
 - DNS wildcard (`address=/#/192.168.4.1`) enables the captive portal
 
@@ -263,17 +268,17 @@ Kia/Hyundai vehicles use OBD2 service `0x22` for manufacturer-specific data. Oil
 
 ```bash
 sudo systemctl status hostapd
-sudo systemctl status carpi-wifi
+sudo systemctl status signalkit-wifi
 sudo journalctl -u hostapd -n 30
-sudo journalctl -u carpi-wifi -n 30
+sudo journalctl -u signalkit-wifi -n 30
 ```
 
 ### Dashboard doesn't start
 
 ```bash
-sudo journalctl -u carpi -f        # Follow live logs
-sudo systemctl status carpi        # Check service status
-cd /opt/carpi/carpi && python3 main.py  # Run manually
+sudo journalctl -u signalkit -f        # Follow live logs
+sudo systemctl status signalkit        # Check service status
+cd /opt/signalkit/signalkit && python3 main.py  # Run manually
 ```
 
 ### Bluetooth won't connect
@@ -310,6 +315,7 @@ Expected on many vehicles. The oil temperature PID (`2101`) is Kia/Hyundai-speci
 | `bluez` / `rfcomm` | Bluetooth stack and serial binding |
 | `hostapd` | WiFi access point |
 | `dnsmasq` | DHCP + DNS for hotspot clients |
+| `xserver-xorg-core` | X11 display server for pywebview |
 
 All dependencies are installed automatically during the image build.
 

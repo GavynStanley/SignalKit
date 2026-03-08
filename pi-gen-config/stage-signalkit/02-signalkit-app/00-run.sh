@@ -14,7 +14,7 @@
 echo "==> [02-signalkit-app] Installing SignalKit application"
 
 SIGNALKIT_DEST="${ROOTFS_DIR}/opt/signalkit"
-SIGNALKIT_REPO="https://github.com/GavynStanley/SignalKit.git"
+SIGNALKIT_REPO="https://github.com/GavynStanley/CarPi.git"
 
 # ---------------------------------------------------------------------------
 # 1. Clone the SignalKit repo into the image (enables OTA updates via git pull)

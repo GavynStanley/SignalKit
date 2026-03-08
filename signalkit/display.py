@@ -159,7 +159,16 @@ tailwind.config = {{
 <body>
 
 <div class="text-center mb-6">
-  <div class="text-3xl font-extrabold tracking-widest accent glow mb-1">SIGNALKIT</div>
+  <div style="display:flex;justify-content:center;margin-bottom:8px;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="12 14 220 42" width="280" height="56">
+      <rect x="16" y="44" width="6" height="8" rx="2" fill="{accent}" opacity="0.32"/>
+      <rect x="25" y="38" width="6" height="14" rx="2" fill="{accent}" opacity="0.55"/>
+      <rect x="34" y="30" width="6" height="22" rx="2" fill="{accent}" opacity="0.78"/>
+      <rect x="43" y="20" width="6" height="32" rx="2" fill="{accent}"/>
+      <text x="60" y="44" font-family="'Arial Black','Helvetica Neue',sans-serif" font-weight="800" font-size="32" letter-spacing="-0.5" fill="#ffffff">Signal</text>
+      <text x="178" y="44" font-family="'Arial Black','Helvetica Neue',sans-serif" font-weight="800" font-size="32" letter-spacing="-0.5" fill="{accent}">Kit</text>
+    </svg>
+  </div>
   <div class="text-sm text-zinc-400">Setup Required</div>
 </div>
 

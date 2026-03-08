@@ -71,19 +71,6 @@ step "Pre-flight checks"
 SIGNALKIT_SRC="${SCRIPT_DIR}/signalkit"
 [[ -d "${SIGNALKIT_SRC}" ]] || err "SignalKit source not found: ${SIGNALKIT_SRC}"
 
-# Check OBD_MAC is set (not the placeholder)
-OBD_MAC=$(grep "^OBD_MAC" "${SIGNALKIT_SRC}/config.py" | cut -d'"' -f2)
-if [[ "${OBD_MAC}" == "AA:BB:CC:DD:EE:FF" ]]; then
-    warn "============================================================"
-    warn "OBD_MAC in signalkit/config.py is still the placeholder value!"
-    warn "The image will build, but OBD2 connection won't work until"
-    warn "you set the correct MAC address."
-    warn "Either:"
-    warn "  1. Edit signalkit/config.py now, then rebuild"
-    warn "  2. Or set it after flashing (requires disabling overlayfs)"
-    warn "============================================================"
-    sleep 3
-fi
 
 # Check the build directory is not on a noexec filesystem
 BUILD_MOUNT=$(df -P "${SCRIPT_DIR}" 2>/dev/null | tail -1 | awk '{print $6}')
@@ -274,14 +261,3 @@ echo "     Dashboard appears in ~15 seconds."
 echo ""
 echo "  3. Connect to 'SignalKit' WiFi (password: signalkit1234) and open http://192.168.4.1:8080"
 echo ""
-if [[ "${OBD_MAC}" == "AA:BB:CC:DD:EE:FF" ]]; then
-    echo -e "  ${YELLOW}4. Set your OBD2 MAC address:${NC}"
-    echo "     The image was built with the placeholder MAC address."
-    echo "     To fix without rebuilding:"
-    echo "       a. SSH into Pi (enable SSH first via raspi-config)"
-    echo "       b. sudo raspi-config -> Advanced -> Overlay FS -> Disable"
-    echo "       c. nano /opt/signalkit/config.py  (set OBD_MAC)"
-    echo "       d. sudo raspi-config -> Advanced -> Overlay FS -> Enable"
-    echo "       e. sudo reboot"
-    echo ""
-fi
