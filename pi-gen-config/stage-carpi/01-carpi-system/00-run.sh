@@ -50,15 +50,22 @@ apt-get remove -y --purge \
     manpages \
     2>/dev/null || true
 
-# Pi Zero 2 W only needs the v7 kernel (armv7l, 32-bit).
+# Pi Zero 2 W only needs the v7/v7l kernel.
 # Remove v6 (Pi 1/Zero 1) and v8 (64-bit) kernels to:
-#   - Skip 2 of 3 initramfs rebuilds during package installs (~10 min saved)
+#   - Skip initramfs rebuilds for unused kernels (~30-60 min saved under QEMU)
 #   - Save ~60MB in the final image
+echo "Installed kernel packages:"
+dpkg -l 'linux-image*' 2>/dev/null | grep '^ii' || true
+
 echo "Removing unused kernel variants (keeping v7 for Pi Zero 2 W)..."
-apt-get remove -y --purge \
-    "linux-image-*-v6+" \
-    "linux-image-*-v8+" \
-    2>/dev/null || true
+# Match actual Bookworm package names: linux-image-6.1.0-rpiN-rpi-v6, -v8
+REMOVE_PKGS=$(dpkg -l 'linux-image*' 2>/dev/null | grep '^ii' | awk '{print $2}' | grep -E '[-]v6|[-]v8' || true)
+if [ -n "$REMOVE_PKGS" ]; then
+    echo "Removing: $REMOVE_PKGS"
+    apt-get remove -y --purge $REMOVE_PKGS
+else
+    echo "No v6/v8 kernel packages found to remove"
+fi
 
 apt-get autoremove -y --purge
 apt-get clean
@@ -227,9 +234,10 @@ install -m 644 files/plymouth-carpi/dot.png \
     "${ROOTFS_DIR}/usr/share/plymouth/themes/carpi/dot.png"
 
 # Set CarPi as the default Plymouth theme
+# NOTE: We do NOT run update-initramfs here — export-image/05-finalise does it
+# automatically. Running it twice doubles the build time under QEMU emulation.
 on_chroot << 'EOF'
 plymouth-set-default-theme carpi
-update-initramfs -u
 EOF
 
 # ---------------------------------------------------------------------------
