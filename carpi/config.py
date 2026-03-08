@@ -50,7 +50,7 @@ _active_override_path = None  # type: str | None
 
 # --- OBD2 Adapter ---
 OBD_MAC = "AA:BB:CC:DD:EE:FF"   # Replace with your Veepeak adapter's MAC
-OBD_PORT = "/dev/ttys004"        # Serial port after rfcomm bind
+OBD_PORT = "/dev/rfcomm0"        # Serial port after rfcomm bind
 OBD_BAUDRATE = 38400             # ELM327 default baud rate
 OBD_CONNECT_TIMEOUT = 30         # Seconds to wait for connection on boot
 OBD_RECONNECT_DELAY = 5          # Seconds to wait before retrying after disconnect

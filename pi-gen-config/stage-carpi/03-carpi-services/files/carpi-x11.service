@@ -14,6 +14,14 @@ Group=pi
 # Start a minimal X server on vt1 with no access control
 # -nocursor hides the mouse cursor (touchscreen/no-mouse kiosk)
 ExecStart=/usr/bin/X :0 -nolisten tcp -nocursor vt1
+# Set root window to black immediately (no white flash while app loads)
+ExecStartPost=/usr/bin/xsetroot -display :0 -solid black
+# Disable DPMS and screen blanking — kiosk display must stay on permanently
+ExecStartPost=/usr/bin/xset -display :0 s off
+ExecStartPost=/usr/bin/xset -display :0 -dpms
+ExecStartPost=/usr/bin/xset -display :0 s noblank
+# Tell Plymouth we've taken over the display
+ExecStartPost=-/usr/bin/plymouth quit --retain-splash
 Restart=always
 RestartSec=3
 

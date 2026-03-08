@@ -83,7 +83,7 @@ SHARED_HEAD = """
 # ---------------------------------------------------------------------------
 
 DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background:#09090b">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -403,7 +403,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 
 SETTINGS_HTML = """<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background:#09090b">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
@@ -783,7 +783,7 @@ SETTINGS_HTML = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 
 UPDATE_HTML = """<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background:#09090b">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
@@ -928,7 +928,7 @@ UPDATE_HTML = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 
 DIAGNOSTICS_HTML = """<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background:#09090b">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
@@ -1087,7 +1087,7 @@ DIAGNOSTICS_HTML = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 
 SETUP_HTML = """<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background:#09090b">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -1331,7 +1331,7 @@ SETUP_HTML = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 
 ABOUT_HTML = """<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background:#09090b">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -2007,7 +2007,7 @@ def api_update_post():
 # ---------------------------------------------------------------------------
 
 DEV_HTML = """<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background:#09090b">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">

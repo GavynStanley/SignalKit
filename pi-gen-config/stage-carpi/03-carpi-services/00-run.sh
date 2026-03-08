@@ -30,6 +30,12 @@ install -m 644 files/carpi-x11.service \
 on_chroot << 'EOF'
 systemctl enable carpi-x11.service
 echo "carpi-x11.service enabled"
+
+# Mask default plymouth-quit so our X11 service controls when Plymouth exits.
+# Without this, Plymouth quits before X11 is ready, causing a black flash.
+systemctl mask plymouth-quit.service 2>/dev/null || true
+systemctl mask plymouth-quit-wait.service 2>/dev/null || true
+echo "plymouth-quit masked (carpi-x11 handles Plymouth exit)"
 EOF
 
 # Allow pi user to start X without root

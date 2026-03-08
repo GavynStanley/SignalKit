@@ -29,6 +29,7 @@ xserver-xorg-core
 xserver-xorg-input-evdev
 xinit
 x11-xserver-utils
+xsetroot
 
 # --- Python runtime ---
 python3
