@@ -60,6 +60,11 @@ EOF
 install -m 644 files/carpi-wifi.service \
     "${ROOTFS_DIR}/etc/systemd/system/carpi-wifi.service"
 
+# Helper script that generates hostapd.conf from config.py
+install -d "${ROOTFS_DIR}/opt/carpi/scripts"
+install -m 755 files/carpi-gen-hostapd.sh \
+    "${ROOTFS_DIR}/opt/carpi/scripts/carpi-gen-hostapd.sh"
+
 on_chroot << 'EOF'
 systemctl enable carpi-wifi.service
 echo "carpi-wifi.service enabled"
