@@ -1,0 +1,4 @@
+initramfs-tools
+raspi-firmware
+# CarPi: Pi Zero 2 W only needs v7 kernel
+linux-image-rpi-v7

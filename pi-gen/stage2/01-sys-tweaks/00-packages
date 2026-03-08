@@ -1,0 +1,17 @@
+# =============================================================================
+# CarPi-trimmed stage2 packages
+# =============================================================================
+# Stripped down from upstream pi-gen to only what CarPi needs.
+# Packages we don't install here never need to be removed later,
+# saving ~400 packages and significant build time.
+# =============================================================================
+
+ssh sudo
+console-setup keyboard-configuration
+bash-completion
+ca-certificates curl
+dosfstools
+raspberrypi-sys-mods
+raspi-utils
+bluez bluez-firmware
+python3-venv

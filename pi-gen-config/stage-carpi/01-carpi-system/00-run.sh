@@ -38,91 +38,19 @@ EOF
 # ---------------------------------------------------------------------------
 # 1. Remove packages that waste space or slow boot
 # ---------------------------------------------------------------------------
+# NOTE: Most bloat (build-essential, media libs, spell checkers, unused
+# firmware, extra kernels) is no longer installed — pi-gen/stage2 package
+# lists have been trimmed at the source. Only a few stragglers remain.
 on_chroot << 'EOF'
 echo "Removing unnecessary packages..."
 
-# --- Round 1: Services and daemons we don't need ---
+# Services/daemons we don't need (may or may not be present)
 apt-get remove -y --purge \
-    avahi-daemon \
-    triggerhappy \
-    rsyslog \
-    dphys-swapfile \
-    logrotate \
-    cron \
+    avahi-daemon triggerhappy rsyslog dphys-swapfile \
+    logrotate cron \
     2>/dev/null || true
 
-# --- Round 2: Build tools (not needed at runtime) ---
-echo "Removing build toolchain..."
-apt-get remove -y --purge \
-    build-essential \
-    gcc gcc-12 g++ g++-12 cpp cpp-12 \
-    binutils binutils-arm-linux-gnueabihf binutils-common \
-    make dpkg-dev \
-    libc6-dev libc-dev-bin libc-devtools libcrypt-dev \
-    libgcc-12-dev libstdc++-12-dev \
-    libffi-dev libexpat1-dev libblkid-dev \
-    libglib2.0-dev libglib2.0-dev-bin \
-    fakeroot \
-    2>/dev/null || true
-
-# --- Round 3: Documentation and spell checkers ---
-echo "Removing docs, man pages, spell checkers..."
-apt-get remove -y --purge \
-    man-db manpages \
-    groff-base \
-    aspell aspell-en libaspell15 \
-    hunspell-en-us libhunspell-1.7-0 \
-    enchant-2 libenchant-2-2 \
-    dictionaries-common emacsen-common \
-    2>/dev/null || true
-
-# --- Round 4: Media/graphics processing (not needed for web dashboard) ---
-echo "Removing media processing libraries..."
-apt-get remove -y --purge \
-    ghostscript libgs10 libgs10-common libgs-common \
-    imagemagick-6-common \
-    gstreamer1.0-gl gstreamer1.0-libav \
-    gstreamer1.0-plugins-bad gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good gstreamer1.0-x \
-    libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
-    libgstreamer-plugins-bad1.0-0 libgstreamer-gl1.0-0 \
-    libcamera-ipa libcamera0.5 \
-    libdjvulibre21 libdjvulibre-text \
-    2>/dev/null || true
-
-# --- Round 5: Unnecessary system tools ---
-echo "Removing unnecessary system tools..."
-apt-get remove -y --purge \
-    cifs-utils \
-    flashrom \
-    dmidecode \
-    device-tree-compiler \
-    2>/dev/null || true
-# Note: keeping dosfstools (SD card repair), fdisk, and perl (apt/dpkg depend on it)
-
-# --- Round 6: Firmware for hardware we don't have ---
-echo "Removing unused WiFi firmware (keeping brcm for Pi built-in WiFi)..."
-apt-get remove -y --purge \
-    firmware-atheros \
-    firmware-libertas \
-    firmware-mediatek \
-    firmware-realtek \
-    2>/dev/null || true
-
-# --- Round 7: Unused kernel variants ---
-echo "Installed kernel packages:"
-dpkg -l 'linux-image*' 2>/dev/null | grep '^ii' || true
-
-echo "Removing unused kernel variants (keeping v7 for Pi Zero 2 W)..."
-REMOVE_PKGS=$(dpkg -l 'linux-image*' 2>/dev/null | grep '^ii' | awk '{print $2}' | grep -E '[-]v6|[-]v8' || true)
-if [ -n "$REMOVE_PKGS" ]; then
-    echo "Removing: $REMOVE_PKGS"
-    apt-get remove -y --purge $REMOVE_PKGS
-else
-    echo "No v6/v8 kernel packages found to remove"
-fi
-
-# --- Clean up ---
+# Clean up
 apt-get autoremove -y --purge
 apt-get clean
 rm -rf /var/lib/apt/lists/*
@@ -130,7 +58,6 @@ rm -rf /var/lib/apt/lists/*
 # Remove leftover docs and locale data
 rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
 rm -rf /usr/share/locale/* 2>/dev/null || true
-# Keep en_US locale
 mkdir -p /usr/share/locale/en_US
 
 echo "Package cleanup done"

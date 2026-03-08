@@ -1,0 +1,5 @@
+# CarPi-trimmed: only keep brcm WiFi firmware (Pi built-in) and NetworkManager
+wpasupplicant wireless-tools firmware-brcm80211
+raspberrypi-net-mods
+network-manager
+net-tools

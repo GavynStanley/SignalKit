@@ -41,10 +41,12 @@ WPA_ESSID=""
 WPA_PASSWORD=""
 WPA_COUNTRY="US"
 
+# --- Cloud-init ---
+# Not needed for an embedded dashboard
+ENABLE_CLOUD_INIT=0
+
 # --- Architecture ---
-# Using the arm64 branch of pi-gen (64-bit ARM).
-# Build via Docker on Apple Silicon Mac — arm64 containers run natively, no emulation.
-# Pi Zero 2 W fully supports 64-bit Raspberry Pi OS Lite.
+# 32-bit armhf (pi-gen master branch). Pi Zero 2 W runs this perfectly.
 
 # --- Build stages ---
 # stage0 = bootstrap (base Debian)

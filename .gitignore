@@ -27,3 +27,8 @@ logs.txt
 # Runtime config overrides (user-specific settings)
 carpi_overrides.json
 carpi-config.json
+
+# pi-gen build artifacts (vendored pi-gen source is tracked, build output is not)
+pi-gen/work/
+pi-gen/deploy/
+deploy/

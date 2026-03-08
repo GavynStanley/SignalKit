@@ -2,9 +2,8 @@
 # =============================================================================
 # build.sh — CarPi OS Image Builder
 # =============================================================================
-# Builds a flashable .img file using pi-gen, the official Raspberry Pi OS
-# build tool. The output is a complete OS image with CarPi pre-installed —
-# just flash it to an SD card and put it in the Pi.
+# Builds a flashable .img file using a vendored copy of pi-gen (in ./pi-gen/).
+# No internet clone step — pi-gen is part of this repo with trimmed packages.
 #
 # Requirements:
 #   - Linux host (Ubuntu/Debian recommended; Docker works too)
@@ -61,6 +60,10 @@ done
 
 step "Pre-flight checks"
 
+# Check vendored pi-gen exists
+[[ -d "${PIGEN_DIR}" ]] || err "Vendored pi-gen not found: ${PIGEN_DIR}"
+[[ -f "${PIGEN_DIR}/build.sh" ]] || err "pi-gen/build.sh not found — is pi-gen vendored correctly?"
+
 # Check config file exists
 [[ -f "${CONFIG}" ]] || err "Config not found: ${CONFIG}"
 
@@ -82,51 +85,20 @@ if [[ "${OBD_MAC}" == "AA:BB:CC:DD:EE:FF" ]]; then
     sleep 3
 fi
 
-# Check the build directory is not on a noexec filesystem (e.g. a NAS mount).
-# pi-gen runs chroot + execve inside the work directory — this fails silently
-# on noexec mounts, producing confusing "Unable to execute target architecture"
-# errors throughout the entire build log.
+# Check the build directory is not on a noexec filesystem
 BUILD_MOUNT=$(df -P "${SCRIPT_DIR}" 2>/dev/null | tail -1 | awk '{print $6}')
 if mount | grep -E " ${BUILD_MOUNT} " | grep -q noexec; then
-    err "Build directory is on a noexec filesystem (mount: ${BUILD_MOUNT})."
-    err "This is common with NAS/network mounts. pi-gen cannot build here."
-    err ""
-    err "Copy the project to local storage and retry:"
-    err "  cp -r \"${SCRIPT_DIR}\" \"\${HOME}/car-pi\""
-    err "  cd \"\${HOME}/car-pi\""
-    err "  ./build.sh"
+    err "Build directory is on a noexec filesystem (mount: ${BUILD_MOUNT})." \
+        "Copy the project to local storage and retry."
 fi
 
 if [[ ${USE_DOCKER} -eq 0 ]]; then
-    # Native build requires Linux
     [[ "$(uname -s)" == "Linux" ]] || err \
         "Native build requires Linux. Use --docker for macOS/Windows."
-    # Require sudo
     command -v sudo &>/dev/null || err "sudo is required for native builds"
 fi
 
 log "All pre-flight checks passed"
-
-# ---------------------------------------------------------------------------
-# Clone or update pi-gen
-# ---------------------------------------------------------------------------
-
-step "Setting up pi-gen"
-
-PI_GEN_REPO="https://github.com/RPi-Distro/pi-gen.git"
-# master branch builds armhf (32-bit) and runs natively on x86_64 Ubuntu/Debian.
-# Pi Zero 2 W runs 32-bit Raspberry Pi OS Lite perfectly well.
-PI_GEN_BRANCH="master"
-
-if [[ -d "${PIGEN_DIR}" ]]; then
-    log "pi-gen already cloned — pulling latest"
-    sudo git -C "${PIGEN_DIR}" fetch origin
-    sudo git -C "${PIGEN_DIR}" checkout "${PI_GEN_BRANCH}"
-    sudo git -C "${PIGEN_DIR}" pull --ff-only || warn "git pull failed (offline?), using existing clone"
-else
-    log "Cloning pi-gen from ${PI_GEN_REPO} (branch: ${PI_GEN_BRANCH})"
-    sudo git clone --depth=1 --branch "${PI_GEN_BRANCH}" "${PI_GEN_REPO}" "${PIGEN_DIR}"
-fi
 
 # ---------------------------------------------------------------------------
 # Link our custom stage into pi-gen
@@ -137,42 +109,32 @@ step "Linking custom stage"
 PIGEN_STAGE_LINK="${PIGEN_DIR}/stage-carpi"
 
 if [[ ${USE_DOCKER} -eq 1 ]]; then
-    # Docker build: copy files into pi-gen directory so Docker COPY picks them up.
-    # Symlinks pointing outside the build context are silently ignored by Docker.
+    # Docker build: copy files so Docker COPY picks them up
     sudo rm -rf "${PIGEN_STAGE_LINK}"
     sudo cp -r "${STAGE_DIR}" "${PIGEN_STAGE_LINK}"
     sudo cp "${CONFIG}" "${PIGEN_DIR}/config"
     log "Copied stage-carpi and config into pi-gen (Docker build)"
 else
-    # Native build: symlink is fine since chroot can follow it.
+    # Native build: symlink is fine
     if [[ -L "${PIGEN_STAGE_LINK}" ]]; then
         sudo rm "${PIGEN_STAGE_LINK}"
+    elif [[ -d "${PIGEN_STAGE_LINK}" ]]; then
+        sudo rm -rf "${PIGEN_STAGE_LINK}"
     fi
     sudo ln -sf "${STAGE_DIR}" "${PIGEN_STAGE_LINK}"
     log "Linked: ${PIGEN_STAGE_LINK} -> ${STAGE_DIR}"
 fi
 
-# Ensure all stage run scripts are executable.
-# File permissions may not survive scp/zip transfers between machines.
+# Ensure all stage run scripts are executable
 sudo find "${STAGE_DIR}" -name "*.sh" -exec chmod +x {} \;
 sudo find "${PIGEN_STAGE_LINK}" -name "*.sh" -exec chmod +x {} \;
 log "Stage scripts marked executable"
 
-# Mark stages we don't want as SKIP
-# pi-gen builds all stages in STAGE_LIST; stages 3-5 add desktop, apps, etc.
-for SKIP_STAGE in stage3 stage4 stage5; do
-    SKIP_FILE="${PIGEN_DIR}/${SKIP_STAGE}/SKIP"
-    if [[ -d "${PIGEN_DIR}/${SKIP_STAGE}" ]] && [[ ! -f "${SKIP_FILE}" ]]; then
-        sudo touch "${SKIP_FILE}"
-        log "Marked ${SKIP_STAGE} as SKIP (no desktop/apps needed)"
-    fi
-done
-
-# Don't generate intermediate images for stages 0-2 (saves time and disk)
+# Skip intermediate images for stages 0-2 (saves time and disk)
 for NO_IMG_STAGE in stage0 stage1 stage2; do
     SKIP_IMG="${PIGEN_DIR}/${NO_IMG_STAGE}/SKIP_IMAGES"
     if [[ -d "${PIGEN_DIR}/${NO_IMG_STAGE}" ]] && [[ ! -f "${SKIP_IMG}" ]]; then
-        sudo touch "${SKIP_IMG}"
+        touch "${SKIP_IMG}"
     fi
 done
 
@@ -196,23 +158,6 @@ fi
 # Build
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Patch pi-gen's unmount to use lazy unmount (prevents "target is busy" errors)
-# ---------------------------------------------------------------------------
-# pi-gen's on_chroot and stage scripts leave processes holding /proc, /sys, /dev
-# inside the chroot (e.g., from update-initramfs, dpkg triggers). The default
-# umount fails with "target is busy" and aborts the build. Lazy unmount (-l)
-# defers the actual unmount until references are released, avoiding the error.
-# This is a known pi-gen issue: https://github.com/RPi-Distro/pi-gen/issues/671
-
-PIGEN_COMMON="${PIGEN_DIR}/scripts/common"
-if [[ -f "${PIGEN_COMMON}" ]] && ! grep -q 'umount -l' "${PIGEN_COMMON}"; then
-    log "Patching pi-gen unmount to use lazy unmount (-l)"
-    # pi-gen uses: xargs -r umount
-    # Patch to:    xargs -r umount -l
-    sudo sed -i 's/xargs -r umount$/xargs -r umount -l/' "${PIGEN_COMMON}"
-fi
-
 step "Starting pi-gen build"
 log "This will take 20-60 minutes depending on your machine."
 log "Downloading Debian packages + building the full OS image."
@@ -221,14 +166,12 @@ echo ""
 BUILD_START=$(date +%s)
 
 if [[ ${USE_DOCKER} -eq 1 ]]; then
-    # Docker build — works on macOS and Linux
     log "Using Docker build"
     command -v docker &>/dev/null || err "Docker not found. Install Docker first."
 
     cd "${PIGEN_DIR}"
     sudo bash build-docker.sh
 else
-    # Native build — faster, requires Linux + sudo
     log "Using native build (Linux)"
 
     # Install pi-gen dependencies if not present
