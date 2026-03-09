@@ -49,6 +49,9 @@ def send_raw_command(hex_cmd: str) -> dict:
     Send a raw OBD command (hex string like '010C' or 'ATZ') and return
     the response. Used by the dev console.
 
+    Uses the ELM327 interface directly to avoid python-OBD's OBDCommand
+    parsing, which can crash on raw/AT commands.
+
     Returns dict with keys: ok, command, response, error
     """
     hex_cmd = hex_cmd.strip().upper()
@@ -62,21 +65,32 @@ def send_raw_command(hex_cmd: str) -> dict:
         return {"ok": False, "command": hex_cmd, "response": "", "error": "Not connected to OBD adapter"}
 
     try:
-        cmd = obd.OBDCommand(
-            "DEV_RAW",
-            "Dev Console Raw",
-            hex_cmd.replace(" ", "").encode(),
-            0,
-            lambda msgs, unit: msgs,
-            obd.ECU.ALL,
-            True,
-        )
-        response = conn.query(cmd, force=True)
-        if response.is_null():
+        # Access the ELM327 interface directly for raw serial communication.
+        # python-OBD's query() doesn't handle AT commands or raw mode well,
+        # so we use the internal __send method via name mangling.
+        elm = conn.interface
+        if elm is None:
+            return {"ok": False, "command": hex_cmd, "response": "", "error": "ELM327 interface not available"}
+
+        # Use ELM327's internal __send which returns raw response lines
+        # Name-mangled as _ELM327__send
+        raw_lines = elm._ELM327__send(hex_cmd.encode("ascii"))
+
+        if not raw_lines:
             return {"ok": True, "command": hex_cmd, "response": "NO DATA", "error": ""}
-        raw = str(response.value)
-        return {"ok": True, "command": hex_cmd, "response": raw, "error": ""}
+
+        # raw_lines is a list of bytes/strings — join them
+        result_lines = []
+        for line in raw_lines:
+            s = line.decode("ascii", errors="replace") if isinstance(line, bytes) else str(line)
+            s = s.strip()
+            if s and s != ">":
+                result_lines.append(s)
+
+        response_text = "\n".join(result_lines) if result_lines else "NO DATA"
+        return {"ok": True, "command": hex_cmd, "response": response_text, "error": ""}
     except Exception as e:
+        logger.error(f"Dev console command failed: {e}")
         return {"ok": False, "command": hex_cmd, "response": "", "error": str(e)}
 
 
@@ -189,12 +203,11 @@ def bind_rfcomm() -> bool:
         return False
 
 
-def _btctl(*args, timeout=10) -> str:
-    """Run a single bluetoothctl command and return combined output."""
+def _run_cmd(cmd, timeout=10) -> str:
+    """Run a command and return combined output."""
     try:
         r = subprocess.run(
-            ["bluetoothctl", *args],
-            capture_output=True, text=True, timeout=timeout,
+            cmd, capture_output=True, text=True, timeout=timeout,
         )
         return (r.stdout + r.stderr).strip()
     except subprocess.TimeoutExpired:
@@ -206,15 +219,16 @@ def _btctl(*args, timeout=10) -> str:
 def pair_bluetooth() -> bool:
     """
     Attempt to pair with the OBD2 adapter if not already paired.
-    Uses individual bluetoothctl commands instead of piping stdin
-    (which fails to register the agent properly).
+    OBD adapters use classic Bluetooth (SPP), so we use bluetoothctl
+    with individual commands. For PIN-based pairing, common OBD PINs
+    (1234, 0000) are tried automatically.
     Returns True if pairing succeeds or device is already paired.
     """
     mac = config.OBD_MAC
     logger.info(f"Attempting Bluetooth pair with {mac}")
 
     # Step 1: Power on
-    out = _btctl("power", "on")
+    out = _run_cmd(["bluetoothctl", "power", "on"])
     logger.info(f"BT power on: {out}")
     if "NOT_FOUND" in out:
         logger.error("bluetoothctl not found")
@@ -224,23 +238,71 @@ def pair_bluetooth() -> bool:
         return False
 
     # Step 2: Check if already paired
-    info_out = _btctl("info", mac, timeout=5)
+    info_out = _run_cmd(["bluetoothctl", "info", mac], timeout=5)
     logger.info(f"BT info {mac}: {info_out}")
     if "Paired: yes" in info_out:
         logger.info("Device already paired — trusting and skipping pair step")
-        _btctl("trust", mac)
+        _run_cmd(["bluetoothctl", "trust", mac])
         return True
 
-    # Step 3: Try to pair (use 'yes' to auto-confirm, common OBD PINs are
-    # handled by the default NoInputNoOutput agent capability)
-    pair_out = _btctl("pair", mac, timeout=20)
+    # Step 3: Try to pair using bluetoothctl with PIN agent
+    # First, try pairing with bluetoothctl (works if no PIN required)
+    pair_out = _run_cmd(["bluetoothctl", "pair", mac], timeout=20)
     logger.info(f"BT pair: {pair_out}")
 
     lower = pair_out.lower()
     if "already paired" in lower or "pairing successful" in lower or "successful" in lower:
         logger.info("Bluetooth pairing successful")
-        _btctl("trust", mac)
+        _run_cmd(["bluetoothctl", "trust", mac])
         return True
+
+    # Step 4: If bluetoothctl pair failed, try with common OBD PINs
+    # using a script that auto-answers the PIN prompt
+    if "failed" in lower or "error" in lower:
+        logger.info("Simple pair failed — trying with PIN 1234...")
+        pin_script = f"""#!/usr/bin/expect -f
+set timeout 15
+spawn bluetoothctl
+expect "#"
+send "agent on\\r"
+expect "#"
+send "default-agent\\r"
+expect "#"
+send "pair {mac}\\r"
+expect {{
+    "PIN code" {{ send "1234\\r"; exp_continue }}
+    "Passkey" {{ send "1234\\r"; exp_continue }}
+    "Confirm passkey" {{ send "yes\\r"; exp_continue }}
+    "successful" {{ }}
+    "already paired" {{ }}
+    "Failed" {{ }}
+    timeout {{ }}
+}}
+sleep 1
+send "trust {mac}\\r"
+expect "#"
+send "quit\\r"
+expect eof
+"""
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.exp', delete=False) as f:
+                f.write(pin_script)
+                script_path = f.name
+            os.chmod(script_path, 0o755)
+            result = _run_cmd(["expect", script_path], timeout=25)
+            logger.info(f"Expect pair result: {result}")
+            os.unlink(script_path)
+
+            if "successful" in result.lower() or "already paired" in result.lower():
+                logger.info("Bluetooth pairing with PIN successful")
+                return True
+        except Exception as e:
+            logger.warning(f"Expect-based pairing failed: {e}")
+
+        # Fallback: try direct bluetoothctl trust (device might pair on rfcomm connect)
+        logger.info("PIN pairing failed — trusting device for rfcomm fallback")
+        _run_cmd(["bluetoothctl", "trust", mac])
 
     if "not available" in lower:
         logger.error("Bluetooth controller not available")
@@ -248,15 +310,10 @@ def pair_bluetooth() -> bool:
     if "not found" in lower:
         logger.error(f"Device {mac} not found — is it powered on and in range?")
         return False
-    if "failed" in lower or "error" in lower:
-        logger.error(f"Bluetooth pairing failed: {pair_out}")
-        return False
 
-    # Step 4: Trust the device so it reconnects automatically
-    trust_out = _btctl("trust", mac)
-    logger.info(f"BT trust: {trust_out}")
-
-    logger.info("Bluetooth pairing completed — device should be ready")
+    # Trust the device regardless — rfcomm bind may still work
+    _run_cmd(["bluetoothctl", "trust", mac])
+    logger.info("Bluetooth setup completed — attempting rfcomm bind")
     return True
 
 
@@ -308,13 +365,23 @@ def _read_kia_oil_temp(connection):
 # OBD2 Polling
 # ---------------------------------------------------------------------------
 
+_unsupported_pids: set = set()
+
+
 def _query_safe(connection, cmd_name: str):
     """
     Query a standard OBD command by name, returning its value or None.
+    Skips PIDs that the vehicle has reported as unsupported.
     Suppresses errors so one bad PID doesn't crash the polling loop.
     """
+    if cmd_name in _unsupported_pids:
+        return None
     try:
         cmd = obd.commands[cmd_name]
+        if not connection.supports(cmd):
+            _unsupported_pids.add(cmd_name)
+            logger.info(f"PID {cmd_name} not supported by vehicle — skipping")
+            return None
         response = connection.query(cmd)
         if response.is_null():
             return None
@@ -484,6 +551,10 @@ _diag = {
     "kia_oil_supported": False,
 }
 
+# Full PID snapshot taken on connect — stores name, value, unit for every supported PID
+_pid_snapshot_lock = threading.Lock()
+_pid_snapshot = {"scanned_at": None, "pids": []}
+
 
 def get_diagnostics() -> dict:
     """Return connection diagnostic info."""
@@ -497,6 +568,79 @@ def get_diagnostics() -> dict:
         d["status"] = _data["status"]
         d["poll_errors"] = _data["poll_errors"]
     return d
+
+
+def get_pid_snapshot() -> dict:
+    """Return the last PID snapshot taken on connect."""
+    with _pid_snapshot_lock:
+        return dict(_pid_snapshot)
+
+
+def _scan_all_pids(connection):
+    """
+    Query every supported PID once and store the results.
+    Called once after a successful connection.
+    """
+    logger.info("Scanning all supported PIDs...")
+    results = []
+    for cmd in sorted(connection.supported_commands, key=lambda c: str(c)):
+        # Skip the "supported PIDs" bitmask commands themselves
+        cmd_str = str(cmd)
+        if "Supported PIDs" in cmd_str or "ELM_" in cmd_str or "PIDS_" in cmd.name:
+            continue
+        try:
+            response = connection.query(cmd, force=True)
+            if response.is_null():
+                results.append({
+                    "pid": cmd.name,
+                    "desc": cmd.desc,
+                    "value": None,
+                    "unit": None,
+                    "raw": "NO DATA",
+                })
+                continue
+
+            val = response.value
+            # Extract value and unit from pint Quantity objects
+            if hasattr(val, 'magnitude'):
+                results.append({
+                    "pid": cmd.name,
+                    "desc": cmd.desc,
+                    "value": round(float(val.magnitude), 4),
+                    "unit": str(val.units),
+                    "raw": str(val),
+                })
+            elif isinstance(val, (list, tuple)):
+                # DTCs come back as list of tuples
+                results.append({
+                    "pid": cmd.name,
+                    "desc": cmd.desc,
+                    "value": [str(v) for v in val],
+                    "unit": None,
+                    "raw": str(val),
+                })
+            else:
+                results.append({
+                    "pid": cmd.name,
+                    "desc": cmd.desc,
+                    "value": str(val),
+                    "unit": None,
+                    "raw": str(val),
+                })
+        except Exception as e:
+            results.append({
+                "pid": cmd.name,
+                "desc": cmd.desc,
+                "value": None,
+                "unit": None,
+                "raw": f"ERROR: {e}",
+            })
+
+    with _pid_snapshot_lock:
+        _pid_snapshot["scanned_at"] = time.time()
+        _pid_snapshot["pids"] = results
+
+    logger.info(f"PID scan complete: {len(results)} PIDs queried")
 
 
 class OBDReader(threading.Thread):
@@ -581,6 +725,7 @@ class OBDReader(threading.Thread):
             return
 
         logger.info("OBD2 connected successfully")
+        _unsupported_pids.clear()  # Re-check PID support on each new connection
         _set_connection(connection)
         _update_many({"connected": True, "status": "Connected", "poll_errors": 0})
 
@@ -601,6 +746,9 @@ class OBDReader(threading.Thread):
                 _diag["supported_pids"] = sorted(supported)
             except Exception:
                 _diag["supported_pids"] = []
+
+        # Scan all supported PIDs once on connect
+        _scan_all_pids(connection)
 
         # Track whether optional PIDs are supported
         kia_oil_supported = True

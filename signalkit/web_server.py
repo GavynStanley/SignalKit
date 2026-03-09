@@ -26,6 +26,7 @@ import threading
 import time
 import os
 import json
+import tempfile
 
 from flask import Flask, Response, jsonify, redirect, render_template_string, request
 
@@ -1211,6 +1212,18 @@ DIAGNOSTICS_HTML = """<!DOCTYPE html>
           <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Uptime</span>
           <span class="text-sm font-mono" id="sys-uptime">--</span>
         </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Core Voltage</span>
+          <span class="text-sm font-mono" id="sys-voltage">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">CPU Clock</span>
+          <span class="text-sm font-mono" id="sys-clock">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Power Status</span>
+          <span class="text-sm font-mono" id="sys-power">--</span>
+        </div>
       </div>
     </div>
   </div>
@@ -1306,6 +1319,11 @@ DIAGNOSTICS_HTML = """<!DOCTYPE html>
           document.getElementById('sys-cpu-temp').textContent = d.system.cpu_temp || '--';
           document.getElementById('sys-memory').textContent = d.system.memory || '--';
           document.getElementById('sys-uptime').textContent = d.system.uptime || '--';
+          document.getElementById('sys-voltage').textContent = d.system.voltage || '--';
+          document.getElementById('sys-clock').textContent = d.system.clock_speed || '--';
+          const powerEl = document.getElementById('sys-power');
+          powerEl.textContent = d.system.power_status || '--';
+          powerEl.className = 'text-sm font-mono ' + (d.system.power_status === 'OK' ? 'text-emerald-400' : 'text-red-400');
         }
       } catch(e) {
         document.getElementById('diag-status').textContent = 'Failed to load diagnostics';
@@ -1788,7 +1806,8 @@ _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def _get_system_info() -> dict:
     """Gather Raspberry Pi system stats."""
-    info = {"cpu_temp": "--", "memory": "--", "uptime": "--"}
+    info = {"cpu_temp": "--", "memory": "--", "uptime": "--",
+            "voltage": "--", "power_status": "--", "clock_speed": "--"}
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:
             info["cpu_temp"] = f"{int(f.read().strip()) / 1000:.1f} °C"
@@ -1811,6 +1830,60 @@ def _get_system_info() -> dict:
             info["uptime"] = f"{h}h {m}m"
     except Exception:
         pass
+
+    # Core voltage (power draw indicator)
+    try:
+        r = subprocess.run(["vcgencmd", "measure_volts", "core"],
+                           capture_output=True, text=True, timeout=3)
+        if r.returncode == 0:
+            # Output: "volt=1.2000V"
+            info["voltage"] = r.stdout.strip().split("=")[1]
+    except Exception:
+        pass
+
+    # Throttle / power status — detects undervoltage, throttling, etc.
+    try:
+        r = subprocess.run(["vcgencmd", "get_throttled"],
+                           capture_output=True, text=True, timeout=3)
+        if r.returncode == 0:
+            # Output: "throttled=0x0" (0x0 = OK)
+            hex_val = r.stdout.strip().split("=")[1]
+            flags = int(hex_val, 16)
+            if flags == 0:
+                info["power_status"] = "OK"
+            else:
+                issues = []
+                if flags & 0x1:
+                    issues.append("Under-voltage detected")
+                if flags & 0x2:
+                    issues.append("ARM frequency capped")
+                if flags & 0x4:
+                    issues.append("Currently throttled")
+                if flags & 0x8:
+                    issues.append("Soft temp limit active")
+                if flags & 0x10000:
+                    issues.append("Under-voltage has occurred")
+                if flags & 0x20000:
+                    issues.append("ARM freq capping has occurred")
+                if flags & 0x40000:
+                    issues.append("Throttling has occurred")
+                if flags & 0x80000:
+                    issues.append("Soft temp limit has occurred")
+                info["power_status"] = "; ".join(issues)
+    except Exception:
+        pass
+
+    # CPU clock speed
+    try:
+        r = subprocess.run(["vcgencmd", "measure_clock", "arm"],
+                           capture_output=True, text=True, timeout=3)
+        if r.returncode == 0:
+            # Output: "frequency(48)=1500000000"
+            freq = int(r.stdout.strip().split("=")[1])
+            info["clock_speed"] = f"{freq / 1_000_000:.0f} MHz"
+    except Exception:
+        pass
+
     return info
 
 
@@ -2116,6 +2189,23 @@ def api_data():
     return jsonify(obd_reader.get_data())
 
 
+@app.route("/api/pids")
+def api_pids():
+    """Return the full PID snapshot taken on connect."""
+    return jsonify(obd_reader.get_pid_snapshot())
+
+
+@app.route("/api/pids/scan", methods=["POST"])
+def api_pids_scan():
+    """Re-scan all supported PIDs and return the updated snapshot."""
+    with obd_reader._conn_lock:
+        conn = obd_reader._active_connection
+    if conn is None or not conn.is_connected():
+        return jsonify({"ok": False, "error": "Not connected to OBD adapter"}), 400
+    obd_reader._scan_all_pids(conn)
+    return jsonify({"ok": True, **obd_reader.get_pid_snapshot()})
+
+
 @app.route("/api/bt-logs")
 def api_bt_logs():
     """Return recent Bluetooth-related log lines from journald and SignalKit."""
@@ -2217,39 +2307,76 @@ def _is_likely_obd(name):
 
 
 def _bt_scan_linux():
-    """Scan using bluetoothctl (Raspberry Pi / Linux)."""
+    """Scan using both hcitool (classic BT) and bluetoothctl (BLE).
+    OBD adapters use classic Bluetooth SPP and only show up via hcitool."""
     # Ensure Bluetooth is unblocked and powered on
     subprocess.run(["rfkill", "unblock", "bluetooth"], capture_output=True, timeout=3)
     subprocess.run(["bluetoothctl", "power", "on"], capture_output=True, text=True, timeout=5)
-    # Start discovery in background — bluetoothctl scan on blocks forever,
-    # so we launch it as a subprocess and let it run during the sleep
-    scan_proc = subprocess.Popen(
-        ["bluetoothctl", "--timeout", "8", "scan", "on"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    time.sleep(8)
-    # Kill the scan process if still running
-    try:
-        scan_proc.terminate()
-        scan_proc.wait(timeout=2)
-    except Exception:
-        scan_proc.kill()
-    # List discovered devices
-    proc = subprocess.run(
-        ["bluetoothctl", "devices"], capture_output=True, text=True, timeout=5,
-    )
+
     devices = []
     seen = set()
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if line.startswith("Device "):
-            parts = line.split(" ", 2)
-            mac = parts[1] if len(parts) >= 2 else None
-            name = parts[2] if len(parts) >= 3 else mac
-            if mac and mac not in seen:
-                seen.add(mac)
-                is_obd = _is_likely_obd(name) if name else False
-                devices.append({"mac": mac, "name": name, "obd": is_obd})
+
+    # --- Classic Bluetooth scan via hcitool (finds OBD adapters) ---
+    try:
+        logger.info("Starting classic BT scan (hcitool inq)...")
+        proc = subprocess.run(
+            ["hcitool", "inq", "--length=8", "--flush"],
+            capture_output=True, text=True, timeout=20,
+        )
+        logger.info(f"hcitool inq output: {proc.stdout.strip()}")
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            # Format: "00:1D:A5:09:BC:AA  clock offset: ...  class: ..."
+            if ":" in line and not line.startswith("Inquiring"):
+                mac = line.split()[0] if line.split() else None
+                if mac and len(mac) == 17 and mac.count(":") == 5 and mac not in seen:
+                    seen.add(mac)
+                    # Get the friendly name
+                    name = mac
+                    try:
+                        name_proc = subprocess.run(
+                            ["hcitool", "name", mac],
+                            capture_output=True, text=True, timeout=5,
+                        )
+                        if name_proc.stdout.strip():
+                            name = name_proc.stdout.strip()
+                    except Exception:
+                        pass
+                    is_obd = _is_likely_obd(name)
+                    devices.append({"mac": mac, "name": name, "obd": is_obd})
+    except subprocess.TimeoutExpired:
+        logger.warning("hcitool inq timed out")
+    except FileNotFoundError:
+        logger.warning("hcitool not found — skipping classic BT scan")
+
+    # --- BLE scan via bluetoothctl (finds newer devices) ---
+    try:
+        scan_proc = subprocess.Popen(
+            ["bluetoothctl", "--timeout", "6", "scan", "on"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        time.sleep(6)
+        try:
+            scan_proc.terminate()
+            scan_proc.wait(timeout=2)
+        except Exception:
+            scan_proc.kill()
+        proc = subprocess.run(
+            ["bluetoothctl", "devices"], capture_output=True, text=True, timeout=5,
+        )
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("Device "):
+                parts = line.split(" ", 2)
+                mac = parts[1] if len(parts) >= 2 else None
+                name = parts[2] if len(parts) >= 3 else mac
+                if mac and mac not in seen:
+                    seen.add(mac)
+                    is_obd = _is_likely_obd(name) if name else False
+                    devices.append({"mac": mac, "name": name, "obd": is_obd})
+    except Exception as e:
+        logger.warning(f"BLE scan failed: {e}")
+
     # Sort: OBD adapters first, then alphabetically by name
     devices.sort(key=lambda d: (not d.get("obd", False), (d.get("name") or "").lower()))
     return jsonify({"ok": True, "devices": devices})
@@ -2612,6 +2739,9 @@ DEV_HTML = """<!DOCTYPE html>
             d.response.split('\\n').forEach(line => {
               if (line.trim()) appendLine(line.trim(), 'resp');
             });
+            if (d.decoded) {
+              appendLine('→ ' + d.decoded, 'info');
+            }
           } else {
             appendLine('(empty response)', 'info');
           }
@@ -2676,13 +2806,240 @@ def dev_page():
     )
 
 
+# Standard OBD Mode 01 PID decoders: pid_byte -> (name, decode_func)
+# decode_func takes data bytes (list of ints) and returns (value_str, unit)
+_OBD_DECODERS = {
+    0x04: ("Engine Load", lambda d: (f"{d[0] * 100 / 255:.1f}", "%")),
+    0x05: ("Coolant Temp", lambda d: (f"{d[0] - 40}°C / {(d[0] - 40) * 9 / 5 + 32:.0f}°F", "")),
+    0x06: ("Short Fuel Trim 1", lambda d: (f"{(d[0] - 128) * 100 / 128:.1f}", "%")),
+    0x07: ("Long Fuel Trim 1", lambda d: (f"{(d[0] - 128) * 100 / 128:.1f}", "%")),
+    0x08: ("Short Fuel Trim 2", lambda d: (f"{(d[0] - 128) * 100 / 128:.1f}", "%")),
+    0x09: ("Long Fuel Trim 2", lambda d: (f"{(d[0] - 128) * 100 / 128:.1f}", "%")),
+    0x0B: ("Intake Manifold Pressure", lambda d: (f"{d[0]}", "kPa")),
+    0x0C: ("RPM", lambda d: (f"{(d[0] * 256 + d[1]) / 4:.0f}", "rpm")),
+    0x0D: ("Speed", lambda d: (f"{d[0]} km/h / {d[0] * 0.621371:.0f} mph", "")),
+    0x0E: ("Timing Advance", lambda d: (f"{d[0] / 2 - 64:.1f}", "°")),
+    0x0F: ("Intake Air Temp", lambda d: (f"{d[0] - 40}°C / {(d[0] - 40) * 9 / 5 + 32:.0f}°F", "")),
+    0x10: ("MAF Rate", lambda d: (f"{(d[0] * 256 + d[1]) / 100:.2f}", "g/s")),
+    0x11: ("Throttle Position", lambda d: (f"{d[0] * 100 / 255:.1f}", "%")),
+    0x1F: ("Run Time", lambda d: (f"{d[0] * 256 + d[1]}", "sec")),
+    0x2F: ("Fuel Level", lambda d: (f"{d[0] * 100 / 255:.1f}", "%")),
+    0x42: ("Control Module Voltage", lambda d: (f"{(d[0] * 256 + d[1]) / 1000:.2f}", "V")),
+    0x46: ("Ambient Air Temp", lambda d: (f"{d[0] - 40}°C / {(d[0] - 40) * 9 / 5 + 32:.0f}°F", "")),
+    0x5E: ("Fuel Rate", lambda d: (f"{(d[0] * 256 + d[1]) / 20:.2f}", "L/h")),
+    0xA6: ("Odometer", lambda d: (f"{(d[0] * 16777216 + d[1] * 65536 + d[2] * 256 + d[3]) / 10:.1f} km / {(d[0] * 16777216 + d[1] * 65536 + d[2] * 256 + d[3]) / 10 * 0.621371:.0f} mi", "")),
+}
+
+
+def _decode_obd_response(raw_response, command):
+    """Try to decode a raw OBD hex response into a human-readable string."""
+    try:
+        # Parse response lines — look for mode 41 responses (mode 01 + 0x40)
+        for line in raw_response.split("\n"):
+            line = line.strip()
+            # Strip CAN header (e.g., "7E8 03") — find the 41 XX pattern
+            hex_parts = line.replace(" ", "")
+            # Look for "41" followed by the PID
+            idx = hex_parts.find("41")
+            if idx < 0:
+                # Mode 03 (DTCs): look for "43" response
+                idx = hex_parts.find("43")
+                if idx >= 0:
+                    dtc_data = hex_parts[idx + 2:]
+                    if not dtc_data or dtc_data == "00" * 6:
+                        return "No DTCs stored"
+                    # Parse DTC pairs
+                    dtcs = []
+                    for i in range(0, len(dtc_data) - 3, 4):
+                        b1, b2 = int(dtc_data[i:i+2], 16), int(dtc_data[i+2:i+4], 16)
+                        if b1 == 0 and b2 == 0:
+                            continue
+                        prefix = ["P", "C", "B", "U"][(b1 >> 6) & 0x03]
+                        code = f"{prefix}{(b1 & 0x3F):02X}{b2:02X}"
+                        dtcs.append(code)
+                    if dtcs:
+                        return f"DTCs: {', '.join(dtcs)}"
+                    return "No DTCs stored"
+                continue
+
+            payload = hex_parts[idx:]
+            if len(payload) < 4:
+                continue
+            pid = int(payload[2:4], 16)
+            data_hex = payload[4:]
+            data_bytes = [int(data_hex[i:i+2], 16) for i in range(0, len(data_hex), 2)]
+
+            if pid in _OBD_DECODERS and data_bytes:
+                name, decoder = _OBD_DECODERS[pid]
+                try:
+                    val, unit = decoder(data_bytes)
+                    return f"{name}: {val} {unit}"
+                except (IndexError, ValueError):
+                    pass
+
+        # AT commands
+        cmd_upper = command.strip().upper()
+        if cmd_upper.startswith("AT"):
+            return None  # AT responses are already readable
+
+    except Exception:
+        pass
+    return None
+
+
 @app.route("/api/dev/command", methods=["POST"])
 def api_dev_command():
     body = request.get_json(silent=True)
     if not body or "command" not in body:
         return jsonify({"ok": False, "error": "Missing 'command' in request body"}), 400
     result = obd_reader.send_raw_command(body["command"])
+    # Try to decode the response
+    if result.get("ok") and result.get("response"):
+        decoded = _decode_obd_response(result["response"], body["command"])
+        if decoded:
+            result["decoded"] = decoded
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Version & OTA Upload
+# ---------------------------------------------------------------------------
+
+@app.route("/api/version")
+def api_version():
+    """Return current app version, git hash, and branch."""
+    info = _git_info()
+    # Read full git hash for precise comparison
+    full_hash = "unknown"
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=_APP_DIR, capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            full_hash = r.stdout.strip()
+    except Exception:
+        pass
+    return jsonify({
+        "version": config.APP_VERSION,
+        "hash": full_hash,
+        "hash_short": info.get("hash", "unknown"),
+        "branch": info.get("branch", "unknown"),
+        "date": info.get("date", ""),
+        "subject": info.get("subject", ""),
+    })
+
+
+@app.route("/api/update/upload", methods=["POST"])
+def api_update_upload():
+    """
+    Accept a tar.gz of the signalkit directory from the mobile app,
+    extract it over the current install, and restart the service.
+
+    Expected: multipart form with field 'update' containing a .tar.gz file.
+    The archive should contain the repo files rooted at the repo root
+    (e.g., signalkit/, VERSION, etc.).
+    """
+    import tarfile
+    import shutil
+
+    if "update" not in request.files:
+        return jsonify({"ok": False, "error": "No 'update' file in request"}), 400
+
+    upload = request.files["update"]
+    if not upload.filename:
+        return jsonify({"ok": False, "error": "Empty filename"}), 400
+
+    # Save to a temp file
+    tmp_path = os.path.join(tempfile.gettempdir(), "signalkit_update.tar.gz")
+    try:
+        upload.save(tmp_path)
+        logger.info(f"OTA upload received: {upload.filename} ({os.path.getsize(tmp_path)} bytes)")
+
+        # Validate it's a real tar.gz
+        if not tarfile.is_tarfile(tmp_path):
+            os.unlink(tmp_path)
+            return jsonify({"ok": False, "error": "Not a valid tar.gz archive"}), 400
+
+        # Extract to a staging directory first
+        staging = os.path.join(tempfile.gettempdir(), "signalkit_staging")
+        if os.path.exists(staging):
+            shutil.rmtree(staging)
+        os.makedirs(staging)
+
+        with tarfile.open(tmp_path, "r:gz") as tar:
+            # Security: reject paths that escape the staging dir
+            for member in tar.getmembers():
+                if member.name.startswith("/") or ".." in member.name:
+                    os.unlink(tmp_path)
+                    shutil.rmtree(staging)
+                    return jsonify({"ok": False, "error": f"Unsafe path in archive: {member.name}"}), 400
+            tar.extractall(path=staging)
+
+        # Determine the actual root inside staging
+        # (handles both flat extraction and single-directory wrapping)
+        entries = os.listdir(staging)
+        extract_root = staging
+        if len(entries) == 1 and os.path.isdir(os.path.join(staging, entries[0])):
+            extract_root = os.path.join(staging, entries[0])
+
+        # Verify it looks like a SignalKit update (has signalkit/ dir or VERSION)
+        has_signalkit = os.path.isdir(os.path.join(extract_root, "signalkit"))
+        has_version = os.path.isfile(os.path.join(extract_root, "VERSION"))
+        if not has_signalkit and not has_version:
+            shutil.rmtree(staging)
+            os.unlink(tmp_path)
+            return jsonify({"ok": False, "error": "Archive doesn't look like a SignalKit update"}), 400
+
+        # Read the new version before applying
+        new_version = None
+        if has_version:
+            with open(os.path.join(extract_root, "VERSION")) as f:
+                new_version = f.read().strip()
+
+        # Copy updated files over the existing install
+        # Only overwrite files that exist in the archive
+        for dirpath, dirnames, filenames in os.walk(extract_root):
+            rel_dir = os.path.relpath(dirpath, extract_root)
+            dest_dir = os.path.join(_APP_DIR, rel_dir)
+            os.makedirs(dest_dir, exist_ok=True)
+            for fname in filenames:
+                src = os.path.join(dirpath, fname)
+                dst = os.path.join(dest_dir, fname)
+                shutil.copy2(src, dst)
+                logger.info(f"OTA: updated {os.path.relpath(dst, _APP_DIR)}")
+
+        # Clean up
+        shutil.rmtree(staging)
+        os.unlink(tmp_path)
+
+        logger.info(f"OTA update applied successfully (version: {new_version})")
+
+        # Schedule a service restart
+        def _do_restart():
+            time.sleep(2.0)
+            logger.info("Restarting SignalKit after OTA upload")
+            os.system("sudo systemctl restart signalkit 2>/dev/null || sudo kill -SIGTERM 1")
+        threading.Thread(target=_do_restart, daemon=True).start()
+
+        return jsonify({
+            "ok": True,
+            "message": f"Update applied — restarting",
+            "version": new_version,
+        })
+
+    except Exception as e:
+        logger.error(f"OTA upload failed: {e}")
+        # Clean up on error
+        for p in [tmp_path, os.path.join(tempfile.gettempdir(), "signalkit_staging")]:
+            try:
+                if os.path.isfile(p):
+                    os.unlink(p)
+                elif os.path.isdir(p):
+                    shutil.rmtree(p)
+            except Exception:
+                pass
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ---------------------------------------------------------------------------

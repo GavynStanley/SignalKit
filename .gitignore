@@ -23,6 +23,7 @@ Thumbs.db
 # Logs
 logs.txt
 *.log
+elm.log.*
 
 # Runtime config overrides (user-specific settings)
 signalkit_overrides.json
@@ -39,3 +40,8 @@ build.log
 
 # ignore mobile app for now
 mobile
+
+# Testing files
+emulator_patch.py
+preview_web.py
+preview.py
