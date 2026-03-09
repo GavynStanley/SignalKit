@@ -686,6 +686,116 @@ _KIA_MODULES = {
 }
 
 
+def _decode_kia_mode22(pid_hex, raw_hex_str):
+    """
+    Decode Kia/Hyundai Mode 22 response bytes into human-readable fields.
+    Returns a list of dicts: [{"name": ..., "value": ..., "unit": ...}, ...]
+    or None if no decoder is available.
+    """
+    # Strip CAN headers and response prefix (62 XX XX)
+    # Raw might look like "7E8 10 1C 62 21 01 A3 00" or multi-frame
+    # Extract just the data bytes after the 62 XX XX service/pid echo
+    hex_clean = raw_hex_str.replace(" ", "").upper()
+
+    # Find the response marker: 62 + PID echo (e.g., 62 2101)
+    marker = "62" + pid_hex.upper()
+    idx = hex_clean.find(marker)
+    if idx < 0:
+        return None
+    data_hex = hex_clean[idx + len(marker):]
+
+    # Convert to byte array
+    try:
+        data = [int(data_hex[i:i+2], 16) for i in range(0, len(data_hex), 2)]
+    except (ValueError, IndexError):
+        return None
+
+    if not data:
+        return None
+
+    fields = []
+
+    # Engine ECM data blocks (header 7E0)
+    if pid_hex == "2101" and len(data) >= 20:
+        fields = [
+            {"name": "Coolant Temp", "value": f"{data[0] - 40}", "unit": "°C"},
+            {"name": "Intake Air Temp", "value": f"{data[1] - 40}", "unit": "°C"},
+            {"name": "RPM", "value": f"{(data[2] * 256 + data[3]) / 4:.0f}", "unit": "rpm"},
+            {"name": "Vehicle Speed", "value": f"{data[4]}", "unit": "km/h"},
+            {"name": "Throttle Position", "value": f"{data[5] * 100 / 255:.1f}", "unit": "%"},
+            {"name": "Engine Load", "value": f"{data[6] * 100 / 255:.1f}", "unit": "%"},
+            {"name": "MAF Rate", "value": f"{(data[7] * 256 + data[8]) / 100:.2f}", "unit": "g/s"},
+            {"name": "Battery Voltage", "value": f"{(data[9] * 256 + data[10]) / 1000:.1f}", "unit": "V"},
+        ]
+        if len(data) >= 24:
+            fields.extend([
+                {"name": "Fuel Pressure", "value": f"{data[11] * 3}", "unit": "kPa"},
+                {"name": "Timing Advance", "value": f"{data[12] / 2 - 64:.1f}", "unit": "°"},
+                {"name": "Injector Duty", "value": f"{data[13] * 100 / 255:.1f}", "unit": "%"},
+            ])
+
+    elif pid_hex == "2102" and len(data) >= 10:
+        fields = [
+            {"name": "Oil Temp", "value": f"{data[0] - 40}", "unit": "°C"},
+            {"name": "Fuel Level", "value": f"{data[1] * 100 / 255:.1f}", "unit": "%"},
+            {"name": "Ambient Temp", "value": f"{data[2] - 40}", "unit": "°C"},
+            {"name": "Catalyst Temp", "value": f"{(data[3] * 256 + data[4]) / 10 - 40:.1f}", "unit": "°C"},
+        ]
+        if len(data) >= 12:
+            fields.extend([
+                {"name": "Short Fuel Trim", "value": f"{(data[5] - 128) * 100 / 128:.1f}", "unit": "%"},
+                {"name": "Long Fuel Trim", "value": f"{(data[6] - 128) * 100 / 128:.1f}", "unit": "%"},
+                {"name": "O2 Sensor Voltage", "value": f"{data[7] * 0.005:.3f}", "unit": "V"},
+            ])
+
+    elif pid_hex == "2103" and len(data) >= 8:
+        fields = [
+            {"name": "Ignition Timing Cyl 1", "value": f"{data[0] / 2 - 64:.1f}", "unit": "°"},
+            {"name": "Ignition Timing Cyl 2", "value": f"{data[1] / 2 - 64:.1f}", "unit": "°"},
+            {"name": "Ignition Timing Cyl 3", "value": f"{data[2] / 2 - 64:.1f}", "unit": "°"},
+            {"name": "Ignition Timing Cyl 4", "value": f"{data[3] / 2 - 64:.1f}", "unit": "°"},
+            {"name": "Knock Retard", "value": f"{data[4] * 0.5:.1f}", "unit": "°"},
+        ]
+
+    elif pid_hex == "2105" and len(data) >= 6:
+        fields = [
+            {"name": "Coolant Temp", "value": f"{data[0] - 40}", "unit": "°C"},
+            {"name": "Intake Temp", "value": f"{data[1] - 40}", "unit": "°C"},
+            {"name": "Fuel Pressure", "value": f"{data[2] * 3}", "unit": "kPa"},
+            {"name": "Barometric Pressure", "value": f"{data[3]}", "unit": "kPa"},
+        ]
+
+    # Transmission data
+    elif pid_hex == "2110" and len(data) >= 6:
+        gear_map = {0: "P", 1: "R", 2: "N", 3: "D", 4: "1st", 5: "2nd",
+                    6: "3rd", 7: "4th", 8: "5th", 9: "6th", 10: "7th"}
+        fields = [
+            {"name": "Current Gear", "value": gear_map.get(data[0], f"Unknown ({data[0]})"), "unit": ""},
+            {"name": "Trans Fluid Temp", "value": f"{data[1] - 40}", "unit": "°C"},
+            {"name": "Torque Converter Slip", "value": f"{(data[2] * 256 + data[3]) - 32768}", "unit": "rpm"},
+            {"name": "Input Shaft Speed", "value": f"{data[4] * 256 + data[5]}", "unit": "rpm"},
+        ]
+
+    # ABS / ESC data
+    elif pid_hex == "2112" and len(data) >= 8:
+        fields = [
+            {"name": "Wheel Speed FL", "value": f"{(data[0] * 256 + data[1]) / 100:.1f}", "unit": "km/h"},
+            {"name": "Wheel Speed FR", "value": f"{(data[2] * 256 + data[3]) / 100:.1f}", "unit": "km/h"},
+            {"name": "Wheel Speed RL", "value": f"{(data[4] * 256 + data[5]) / 100:.1f}", "unit": "km/h"},
+            {"name": "Wheel Speed RR", "value": f"{(data[6] * 256 + data[7]) / 100:.1f}", "unit": "km/h"},
+        ]
+
+    # ECU identification strings (F1xx PIDs)
+    elif pid_hex.startswith("F1") and data:
+        try:
+            text = bytes(data).decode("ascii", errors="replace").strip().rstrip("\x00")
+            fields = [{"name": "Value", "value": text, "unit": ""}]
+        except Exception:
+            pass
+
+    return fields if fields else None
+
+
 def _scan_mode22_pids(connection):
     """
     Probe Kia/Hyundai Mode 22 extended PIDs via raw ELM327 commands.
@@ -726,13 +836,17 @@ def _scan_mode22_pids(connection):
                 if not resp or "NO DATA" in resp or "ERROR" in resp or "?" in resp:
                     continue
 
+                # Try to decode the raw response
+                decoded_fields = _decode_kia_mode22(pid_hex, resp)
+
                 results.append({
                     "service": "22",
                     "pid": pid_hex,
                     "desc": f"{module_name} — {pid_desc}",
                     "module": module_name,
                     "header": header,
-                    "value": resp,
+                    "value": decoded_fields if decoded_fields else resp,
+                    "decoded": decoded_fields is not None,
                     "unit": None,
                     "raw": resp,
                 })
