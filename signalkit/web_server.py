@@ -2920,13 +2920,25 @@ def api_version():
             full_hash = r.stdout.strip()
     except Exception:
         pass
+
+    # If an OTA update was applied, .ota_sha has the deployed commit
+    ota_sha_path = os.path.join(_APP_DIR, ".ota_sha")
+    ota_sha = None
+    if os.path.isfile(ota_sha_path):
+        try:
+            with open(ota_sha_path) as f:
+                ota_sha = f.read().strip()
+        except Exception:
+            pass
+
     return jsonify({
         "version": config.APP_VERSION,
-        "hash": full_hash,
-        "hash_short": info.get("hash", "unknown"),
+        "hash": ota_sha or full_hash,
+        "hash_short": (ota_sha or info.get("hash", "unknown"))[:7],
         "branch": info.get("branch", "unknown"),
         "date": info.get("date", ""),
         "subject": info.get("subject", ""),
+        "ota_applied": ota_sha is not None,
     })
 
 
@@ -2997,23 +3009,49 @@ def api_update_upload():
             with open(os.path.join(extract_root, "VERSION")) as f:
                 new_version = f.read().strip()
 
-        # Copy updated files over the existing install
-        # Only overwrite files that exist in the archive
-        for dirpath, dirnames, filenames in os.walk(extract_root):
-            rel_dir = os.path.relpath(dirpath, extract_root)
-            dest_dir = os.path.join(_APP_DIR, rel_dir)
-            os.makedirs(dest_dir, exist_ok=True)
-            for fname in filenames:
-                src = os.path.join(dirpath, fname)
-                dst = os.path.join(dest_dir, fname)
-                shutil.copy2(src, dst)
-                logger.info(f"OTA: updated {os.path.relpath(dst, _APP_DIR)}")
+        # Only copy Pi-relevant directories/files (skip mobile/, .github/, etc.)
+        _ALLOWED_PATHS = {"signalkit", "preview.py", "VERSION", "requirements.txt", "setup.py", "setup.cfg", "pyproject.toml"}
+        updated_count = 0
+        for entry in os.listdir(extract_root):
+            # Check if this top-level entry is in the allowlist
+            if entry not in _ALLOWED_PATHS:
+                logger.info(f"OTA: skipping {entry}")
+                continue
+            src_path = os.path.join(extract_root, entry)
+            dst_path = os.path.join(_APP_DIR, entry)
+            if os.path.isdir(src_path):
+                # Copy directory tree, overwriting existing files
+                for dirpath, dirnames, filenames in os.walk(src_path):
+                    rel_dir = os.path.relpath(dirpath, src_path)
+                    dest_dir = os.path.join(dst_path, rel_dir)
+                    os.makedirs(dest_dir, exist_ok=True)
+                    for fname in filenames:
+                        s = os.path.join(dirpath, fname)
+                        d = os.path.join(dest_dir, fname)
+                        shutil.copy2(s, d)
+                        updated_count += 1
+                        logger.info(f"OTA: updated {entry}/{os.path.relpath(d, dst_path)}")
+            else:
+                shutil.copy2(src_path, dst_path)
+                updated_count += 1
+                logger.info(f"OTA: updated {entry}")
+
+        # Write deployed SHA so version endpoint can report it
+        # (git HEAD won't change since we're copying over a repo)
+        ota_sha_path = os.path.join(_APP_DIR, ".ota_sha")
+        # Try to extract SHA from the wrapper directory name (GitHub format: User-Repo-SHA/)
+        wrapper_name = os.path.basename(extract_root)
+        parts = wrapper_name.rsplit("-", 1)
+        if len(parts) == 2 and len(parts[1]) >= 7:
+            with open(ota_sha_path, "w") as f:
+                f.write(parts[1])
+            logger.info(f"OTA: wrote .ota_sha = {parts[1]}")
 
         # Clean up
         shutil.rmtree(staging)
         os.unlink(tmp_path)
 
-        logger.info(f"OTA update applied successfully (version: {new_version})")
+        logger.info(f"OTA update applied: {updated_count} files (version: {new_version})")
 
         # Schedule a service restart
         def _do_restart():
