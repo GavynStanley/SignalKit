@@ -553,7 +553,7 @@ _diag = {
 
 # Full PID snapshot taken on connect — stores name, value, unit for every supported PID
 _pid_snapshot_lock = threading.Lock()
-_pid_snapshot = {"scanned_at": None, "pids": []}
+_pid_snapshot = {"scanned_at": None, "pids": [], "by_service": {}, "total": 0}
 
 
 def get_diagnostics() -> dict:
@@ -576,71 +576,216 @@ def get_pid_snapshot() -> dict:
         return dict(_pid_snapshot)
 
 
-def _scan_all_pids(connection):
-    """
-    Query every supported PID once and store the results.
-    Called once after a successful connection.
-    """
-    logger.info("Scanning all supported PIDs...")
+def _parse_response_value(val):
+    """Extract a JSON-friendly value from an OBD response value."""
+    if hasattr(val, 'magnitude'):
+        return {
+            "value": round(float(val.magnitude), 4),
+            "unit": str(val.units),
+            "raw": str(val),
+        }
+    elif isinstance(val, (list, tuple)):
+        return {
+            "value": [str(v) for v in val],
+            "unit": None,
+            "raw": str(val),
+        }
+    else:
+        return {
+            "value": str(val),
+            "unit": None,
+            "raw": str(val),
+        }
+
+
+def _scan_standard_pids(connection):
+    """Scan all supported standard PIDs (Services 01, 02, 03, 06, 07, 09)."""
     results = []
+
     for cmd in sorted(connection.supported_commands, key=lambda c: str(c)):
-        # Skip the "supported PIDs" bitmask commands themselves
-        cmd_str = str(cmd)
-        if "Supported PIDs" in cmd_str or "ELM_" in cmd_str or "PIDS_" in cmd.name:
+        cmd_name = cmd.name if hasattr(cmd, 'name') else str(cmd)
+        # Skip bitmask/housekeeping commands
+        if any(skip in cmd_name for skip in ["PIDS_", "ELM_", "MIDS_"]):
             continue
+        if "Supported" in (cmd.desc if hasattr(cmd, 'desc') else ""):
+            continue
+
+        # Determine service number from the command bytes
+        service = "01"
+        if hasattr(cmd, 'command') and cmd.command:
+            raw = cmd.command
+            if isinstance(raw, bytes):
+                service = raw[:2].decode("ascii", errors="replace")
+            else:
+                service = str(raw)[:2]
+
         try:
             response = connection.query(cmd, force=True)
             if response.is_null():
                 results.append({
-                    "pid": cmd.name,
-                    "desc": cmd.desc,
+                    "service": service,
+                    "pid": cmd_name,
+                    "desc": cmd.desc if hasattr(cmd, 'desc') else "",
                     "value": None,
                     "unit": None,
                     "raw": "NO DATA",
                 })
-                continue
-
-            val = response.value
-            # Extract value and unit from pint Quantity objects
-            if hasattr(val, 'magnitude'):
-                results.append({
-                    "pid": cmd.name,
-                    "desc": cmd.desc,
-                    "value": round(float(val.magnitude), 4),
-                    "unit": str(val.units),
-                    "raw": str(val),
-                })
-            elif isinstance(val, (list, tuple)):
-                # DTCs come back as list of tuples
-                results.append({
-                    "pid": cmd.name,
-                    "desc": cmd.desc,
-                    "value": [str(v) for v in val],
-                    "unit": None,
-                    "raw": str(val),
-                })
             else:
+                parsed = _parse_response_value(response.value)
                 results.append({
-                    "pid": cmd.name,
-                    "desc": cmd.desc,
-                    "value": str(val),
-                    "unit": None,
-                    "raw": str(val),
+                    "service": service,
+                    "pid": cmd_name,
+                    "desc": cmd.desc if hasattr(cmd, 'desc') else "",
+                    **parsed,
                 })
         except Exception as e:
             results.append({
-                "pid": cmd.name,
-                "desc": cmd.desc,
+                "service": service,
+                "pid": cmd_name,
+                "desc": cmd.desc if hasattr(cmd, 'desc') else "",
                 "value": None,
                 "unit": None,
                 "raw": f"ERROR: {e}",
             })
 
+    return results
+
+
+# Known Kia/Hyundai Mode 22 extended PIDs to probe
+_KIA_MODE22_PIDS = {
+    "2101": "Engine Data Block 1",
+    "2102": "Engine Data Block 2",
+    "2103": "Engine Data Block 3",
+    "2104": "Engine Data Block 4",
+    "2105": "Engine Data Block 5",
+    "2106": "Engine Data Block 6",
+    "2107": "Engine Data Block 7",
+    "2108": "Engine Data Block 8",
+    "2110": "Transmission Data",
+    "2111": "Transmission Data 2",
+    "2112": "Braking System Data",
+    "2150": "Battery Management",
+    "2180": "Air Conditioning Data",
+    "2191": "ECU Identification",
+    "F190": "VIN (UDS)",
+    "F191": "ECU Hardware Version",
+    "F193": "ECU Software Version",
+    "F195": "ECU Serial Number",
+}
+
+# CAN headers for different Kia modules
+_KIA_MODULES = {
+    "7E0": "Engine (ECM)",
+    "7E2": "Transmission (TCM)",
+    "7D0": "ABS / ESC",
+    "7A0": "Body Control (BCM)",
+    "7C4": "Airbag (SRS)",
+    "770": "Instrument Cluster",
+    "7B0": "Steering",
+    "7C0": "Climate Control",
+}
+
+
+def _scan_mode22_pids(connection):
+    """
+    Probe Kia/Hyundai Mode 22 extended PIDs via raw ELM327 commands.
+    These are manufacturer-specific and not in the standard OBD2 spec.
+    """
+    results = []
+    elm = connection.interface
+    if elm is None:
+        logger.warning("Cannot scan Mode 22 — no ELM327 interface")
+        return results
+
+    # Save original header so we can restore it
+    original_header = None
+
+    for header, module_name in _KIA_MODULES.items():
+        # Set CAN header to target this module
+        try:
+            elm._ELM327__send(f"ATSH {header}".encode("ascii"))
+        except Exception as e:
+            logger.debug(f"Failed to set header {header}: {e}")
+            continue
+
+        module_found_pids = 0
+
+        for pid_hex, pid_desc in _KIA_MODE22_PIDS.items():
+            try:
+                raw_lines = elm._ELM327__send(pid_hex.encode("ascii"))
+                if not raw_lines:
+                    continue
+
+                # Join response lines
+                resp = " ".join(
+                    l.decode("ascii", errors="replace") if isinstance(l, bytes) else str(l)
+                    for l in raw_lines
+                ).strip()
+
+                # Skip error/empty responses
+                if not resp or "NO DATA" in resp or "ERROR" in resp or "?" in resp:
+                    continue
+
+                results.append({
+                    "service": "22",
+                    "pid": pid_hex,
+                    "desc": f"{module_name} — {pid_desc}",
+                    "module": module_name,
+                    "header": header,
+                    "value": resp,
+                    "unit": None,
+                    "raw": resp,
+                })
+                module_found_pids += 1
+
+            except Exception as e:
+                logger.debug(f"Mode 22 probe {header}/{pid_hex} failed: {e}")
+
+        if module_found_pids > 0:
+            logger.info(f"Module {header} ({module_name}): {module_found_pids} extended PIDs found")
+
+    # Restore default header (engine ECU)
+    try:
+        elm._ELM327__send(b"ATSH 7E0")
+    except Exception:
+        pass
+
+    return results
+
+
+def _scan_all_pids(connection):
+    """
+    Full PID scan across all services:
+    - Services 01-09 via python-OBD (standard PIDs)
+    - Service 22 via raw ELM327 (Kia/Hyundai extended PIDs)
+    """
+    logger.info("Starting full PID scan (all services)...")
+    _update("status", "Scanning PIDs...")
+
+    # Standard PIDs
+    standard = _scan_standard_pids(connection)
+    logger.info(f"Standard scan: {len(standard)} PIDs")
+
+    # Mode 22 extended PIDs
+    extended = _scan_mode22_pids(connection)
+    logger.info(f"Extended scan (Mode 22): {len(extended)} PIDs")
+
+    # Group by service
+    by_service = {}
+    for pid in standard + extended:
+        svc = pid.get("service", "??")
+        if svc not in by_service:
+            by_service[svc] = []
+        by_service[svc].append(pid)
+
     with _pid_snapshot_lock:
         _pid_snapshot["scanned_at"] = time.time()
-        _pid_snapshot["pids"] = results
+        _pid_snapshot["pids"] = standard + extended
+        _pid_snapshot["by_service"] = by_service
+        _pid_snapshot["total"] = len(standard) + len(extended)
 
-    logger.info(f"PID scan complete: {len(results)} PIDs queried")
+    _update("status", "Connected")
+    logger.info(f"Full PID scan complete: {len(standard) + len(extended)} total PIDs across {len(by_service)} services")
 
 
 class OBDReader(threading.Thread):
