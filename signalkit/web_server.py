@@ -2124,21 +2124,21 @@ def api_bt_logs():
         # Get SignalKit logs mentioning bluetooth/rfcomm/obd/connect
         r = subprocess.run(
             ["journalctl", "-u", "signalkit", "-u", "signalkit-rfcomm",
-             "-u", "bluetooth", "--no-pager", "-n", "200", "--output", "short-monotonic"],
+             "-u", "bluetooth", "--no-pager", "-n", "200"],
             capture_output=True, text=True, timeout=5,
         )
         if r.returncode == 0:
             bt_keywords = ["bluetooth", "rfcomm", "obd", "bt_pan", "bluez",
                            "connect", "disconnect", "pair", "adapter", "hci",
-                           "rfkill", "serial", "bound", "channel"]
+                           "rfkill", "serial", "bound", "channel", "agent",
+                           "power on", "trust", "scan", "failed", "error",
+                           "bluetoothctl", "bluetoothd"]
             for line in r.stdout.splitlines():
                 lower = line.lower()
                 if any(kw in lower for kw in bt_keywords):
-                    # Trim the hostname prefix for cleaner output
-                    parts = line.split(": ", 1)
-                    lines.append(parts[-1] if len(parts) > 1 else line)
-            # Keep last 50 relevant lines
-            lines = lines[-50:]
+                    lines.append(line)
+            # Keep last 100 relevant lines
+            lines = lines[-100:]
     except Exception as e:
         lines = [f"Error reading logs: {e}"]
     return jsonify({"ok": True, "lines": lines})

@@ -189,62 +189,75 @@ def bind_rfcomm() -> bool:
         return False
 
 
+def _btctl(*args, timeout=10) -> str:
+    """Run a single bluetoothctl command and return combined output."""
+    try:
+        r = subprocess.run(
+            ["bluetoothctl", *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return (r.stdout + r.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return "TIMEOUT"
+    except FileNotFoundError:
+        return "NOT_FOUND"
+
+
 def pair_bluetooth() -> bool:
     """
     Attempt to pair with the OBD2 adapter if not already paired.
-    Uses bluetoothctl for scripted pairing.
+    Uses individual bluetoothctl commands instead of piping stdin
+    (which fails to register the agent properly).
     Returns True if pairing succeeds or device is already paired.
     """
     mac = config.OBD_MAC
     logger.info(f"Attempting Bluetooth pair with {mac}")
 
-    # bluetoothctl commands: power on, agent, pair, trust, connect
-    commands = f"""
-power on
-agent on
-default-agent
-pair {mac}
-trust {mac}
-connect {mac}
-quit
-"""
-    try:
-        proc = subprocess.run(
-            ["bluetoothctl"],
-            input=commands,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        output = proc.stdout + proc.stderr
-        logger.info(f"bluetoothctl output:\n{output.strip()}")
-
-        lower = output.lower()
-
-        # Check for hard failures first
-        if "not available" in lower:
-            logger.error("Bluetooth controller not available")
-            return False
-        if "device not found" in lower or "not found" in lower:
-            logger.error(f"Bluetooth device {mac} not found — is it powered on and in range?")
-            return False
-        if "failed" in lower and "already paired" not in lower:
-            logger.error(f"Bluetooth pairing failed — see output above")
-            return False
-
-        if "successful" in lower or "already paired" in lower or "pairing successful" in lower:
-            logger.info("Bluetooth pairing successful")
-            return True
-
-        # If we got here, device might already be paired/trusted — check
-        logger.info("bluetoothctl completed — assuming device is ready")
-        return True
-    except subprocess.TimeoutExpired:
-        logger.error("bluetoothctl timed out during pairing")
-        return False
-    except FileNotFoundError:
+    # Step 1: Power on
+    out = _btctl("power", "on")
+    logger.info(f"BT power on: {out}")
+    if "NOT_FOUND" in out:
         logger.error("bluetoothctl not found")
         return False
+    if "not available" in out.lower():
+        logger.error("Bluetooth controller not available")
+        return False
+
+    # Step 2: Check if already paired
+    info_out = _btctl("info", mac, timeout=5)
+    logger.info(f"BT info {mac}: {info_out}")
+    if "Paired: yes" in info_out:
+        logger.info("Device already paired — trusting and skipping pair step")
+        _btctl("trust", mac)
+        return True
+
+    # Step 3: Try to pair (use 'yes' to auto-confirm, common OBD PINs are
+    # handled by the default NoInputNoOutput agent capability)
+    pair_out = _btctl("pair", mac, timeout=20)
+    logger.info(f"BT pair: {pair_out}")
+
+    lower = pair_out.lower()
+    if "already paired" in lower or "pairing successful" in lower or "successful" in lower:
+        logger.info("Bluetooth pairing successful")
+        _btctl("trust", mac)
+        return True
+
+    if "not available" in lower:
+        logger.error("Bluetooth controller not available")
+        return False
+    if "not found" in lower:
+        logger.error(f"Device {mac} not found — is it powered on and in range?")
+        return False
+    if "failed" in lower or "error" in lower:
+        logger.error(f"Bluetooth pairing failed: {pair_out}")
+        return False
+
+    # Step 4: Trust the device so it reconnects automatically
+    trust_out = _btctl("trust", mac)
+    logger.info(f"BT trust: {trust_out}")
+
+    logger.info("Bluetooth pairing completed — device should be ready")
+    return True
 
 
 # ---------------------------------------------------------------------------
