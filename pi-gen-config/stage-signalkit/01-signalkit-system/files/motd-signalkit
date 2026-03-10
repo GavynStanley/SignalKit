@@ -1,0 +1,128 @@
+#!/bin/bash
+# =============================================================================
+# SignalKit MOTD — replaces default Debian/Raspbian login banner
+# =============================================================================
+
+# Colors
+R='\033[1;31m'    # Bold red
+W='\033[1;37m'    # Bold white
+G='\033[32m'      # Green
+Y='\033[33m'      # Yellow
+RED='\033[31m'    # Red
+DIM='\033[0;90m'  # Dim gray
+NC='\033[0m'      # Reset
+
+VERSION="unknown"
+[ -f /opt/signalkit/VERSION ] && VERSION=$(cat /opt/signalkit/VERSION)
+
+HOSTNAME=$(hostname)
+UPTIME=$(uptime -p 2>/dev/null | sed 's/^up //' || echo "unknown")
+KERNEL=$(uname -r)
+CPU_TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+if [ -n "$CPU_TEMP" ]; then
+    CPU_TEMP_C=$((CPU_TEMP / 1000))
+    CPU_TEMP_F=$(( (CPU_TEMP_C * 9 / 5) + 32 ))
+    TEMP_STR="${CPU_TEMP_C}°C / ${CPU_TEMP_F}°F"
+else
+    TEMP_STR="N/A"
+fi
+
+# Memory usage
+MEM_TOTAL=$(free -m 2>/dev/null | awk '/^Mem:/ {print $2}')
+MEM_USED=$(free -m 2>/dev/null | awk '/^Mem:/ {print $3}')
+if [ -n "$MEM_TOTAL" ]; then
+    MEM_STR="${MEM_USED}MB / ${MEM_TOTAL}MB"
+else
+    MEM_STR="N/A"
+fi
+
+# Disk usage (root partition)
+DISK=$(df -h / 2>/dev/null | awk 'NR==2 {printf "%s / %s (%s)", $3, $2, $5}')
+
+# Collect all IP addresses (skip loopback)
+IP_LINES=""
+while IFS= read -r line; do
+    IFACE=$(echo "$line" | awk '{print $NF}')
+    ADDR=$(echo "$line" | awk '{print $2}' | cut -d/ -f1)
+    case "$IFACE" in
+        wlan0) LABEL="WiFi Hotspot" ;;
+        usb0)  LABEL="USB Gadget" ;;
+        eth0)  LABEL="Ethernet" ;;
+        *)     LABEL="$IFACE" ;;
+    esac
+    IP_LINES="${IP_LINES}$(printf '    %-20s %s' "${LABEL} (${IFACE}):" "${ADDR}")\n"
+done < <(ip -4 addr show 2>/dev/null | grep 'inet ' | grep -v '127.0.0.1')
+
+if [ -z "$IP_LINES" ]; then
+    IP_LINES="    No network interfaces active\n"
+fi
+
+# SignalKit config — read overrides from JSON
+SK_CONFIG=""
+for CFG_PATH in /boot/firmware/signalkit-config.json /boot/signalkit-config.json; do
+    [ -f "$CFG_PATH" ] && SK_CONFIG="$CFG_PATH" && break
+done
+
+OBD_MAC="not configured"
+HOTSPOT_SSID="SignalKit"
+HOTSPOT_PASS="signalkit1234"
+WEB_PORT="8080"
+SETUP_DONE="no"
+if [ -n "$SK_CONFIG" ]; then
+    _val() { python3 -c "import json,sys; d=json.load(open('$SK_CONFIG')); v=d.get('$1',''); v and print(v)" 2>/dev/null; }
+    _m=$(_val OBD_MAC);          [ -n "$_m" ] && OBD_MAC="$_m"
+    _s=$(_val HOTSPOT_SSID);     [ -n "$_s" ] && HOTSPOT_SSID="$_s"
+    _p=$(_val HOTSPOT_PASSWORD); [ -n "$_p" ] && HOTSPOT_PASS="$_p"
+    _w=$(_val WEB_PORT);         [ -n "$_w" ] && WEB_PORT="$_w"
+    _d=$(_val SETUP_COMPLETE);   [ "$_d" = "1" ] && SETUP_DONE="yes"
+fi
+
+# Service status
+SK_STATUS=$(systemctl is-active signalkit.service 2>/dev/null || echo "unknown")
+case "$SK_STATUS" in
+    active)   SK_COLOR="$G" ;;
+    failed)   SK_COLOR="$RED" ;;
+    *)        SK_COLOR="$Y" ;;
+esac
+
+# Read-only filesystem status
+RO_STATUS="read-write"
+RO_COLOR="$Y"
+if mount | grep -q 'on / .*overlay'; then
+    RO_STATUS="read-only (overlayfs)"
+    RO_COLOR="$G"
+fi
+
+# Dashboard IP
+DASH_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -z "$DASH_IP" ] && DASH_IP="192.168.4.1"
+
+# Print banner
+printf "\n"
+printf "${R}  ____  _                   _ _  ___ _   ${NC}\n"
+printf "${R} / ___|(_) __ _ _ __   __ _| | |/ (_) |_ ${NC}\n"
+printf "${R} \\___ \\| |/ _\` | '_ \\ / _\` | | ' /| | __|${NC}\n"
+printf "${R}  ___) | | (_| | | | | (_| | | . \\| | |_ ${NC}\n"
+printf "${R} |____/|_|\\__, |_| |_|\\__,_|_|_|\\_\\_|\\__|${NC}\n"
+printf "${R}          |___/                           ${NC}\n"
+printf "${DIM}  OBD2 Dashboard v%s${NC}\n" "$VERSION"
+printf "\n"
+printf "  ${W}System${NC}\n"
+printf "    Hostname:    %s\n" "$HOSTNAME"
+printf "    Uptime:      %s\n" "$UPTIME"
+printf "    Kernel:      %s\n" "$KERNEL"
+printf "    CPU Temp:    %s\n" "$TEMP_STR"
+printf "    Memory:      %s\n" "$MEM_STR"
+printf "    Disk:        %s\n" "$DISK"
+printf "    Filesystem:  ${RO_COLOR}%s${NC}\n" "$RO_STATUS"
+printf "\n"
+printf "  ${W}Network${NC}\n"
+printf "${IP_LINES}"
+printf "\n"
+printf "  ${W}SignalKit${NC}\n"
+printf "    Service:     ${SK_COLOR}%s${NC}\n" "$SK_STATUS"
+printf "    Dashboard:   http://%s:%s\n" "$DASH_IP" "$WEB_PORT"
+printf "    Hotspot:     %s / %s\n" "$HOTSPOT_SSID" "$HOTSPOT_PASS"
+printf "    OBD Adapter: %s\n" "$OBD_MAC"
+printf "    Setup Done:  %s\n" "$SETUP_DONE"
+printf "\n"

@@ -14,6 +14,7 @@
 #   GET  /api/status    - Connection health check
 #   GET  /api/settings  - JSON of all editable settings + current values
 #   POST /api/settings  - Save one or more settings (JSON body)
+#   GET  /api/debug     - Aggregated debug snapshot (OBD, system, config, logs)
 #   POST /api/update    - Trigger a git pull OTA update
 #
 # Requires: flask (pip install flask)
@@ -143,6 +144,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <span id="trip-dist">-- mi</span>
       <span id="trip-avg-speed">-- mph</span>
       <span id="trip-avg-mpg">-- mpg</span>
+      <span class="text-zinc-600">|</span>
+      <span id="version-badge" class="font-mono text-zinc-600">...</span>
     </div>
   </div>
 
@@ -218,6 +221,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     };
     const _pidSeen = {};
     let _connUpdates = 0;
+
+    // Fetch git version for testing badge
+    fetch('/api/version').then(r=>r.json()).then(d=>{
+      const vb = document.getElementById('version-badge');
+      if(vb && d.hash_short) {
+        vb.textContent = (d.ota_applied ? 'OTA ' : '') + d.hash_short;
+        vb.title = d.version || d.hash || '';
+      }
+    }).catch(()=>{});
     function checkPidSupport(d) {
       if (!d.connected) { _connUpdates = 0; return; }
       _connUpdates++;
@@ -1736,6 +1748,7 @@ _GROUPS = {
     "OBD_BT_CHANNEL": "OBD2 Connection",
     "FAST_POLL_INTERVAL": "OBD2 Connection",
     "SLOW_POLL_INTERVAL": "OBD2 Connection",
+    "SCAN_PIDS_ON_BOOT": "OBD2 Connection",
     "COOLANT_OVERHEAT_C": "Warning Thresholds",
     "BATTERY_LOW_V": "Warning Thresholds",
     "BATTERY_CRITICAL_V": "Warning Thresholds",
@@ -1747,6 +1760,7 @@ _GROUPS = {
     "UNITS_TEMP": "Display",
     "COLOR_THEME": "Display",
     "SHOW_SPARKLINES": "Display",
+    "SCREEN_BRIGHTNESS": "Display",
     "LAYOUT_METRICS": "Dashboard Layout",
     "LAYOUT_SLOW": "Dashboard Layout",
     "PHONE_BT_MAC": "Phone",
@@ -2186,7 +2200,9 @@ def api_diagnostics():
 
 @app.route("/api/data")
 def api_data():
-    return jsonify(obd_reader.get_data())
+    data = obd_reader.get_data()
+    data["restart_pending"] = config.restart_pending
+    return jsonify(data)
 
 
 @app.route("/api/pids")
@@ -2252,12 +2268,18 @@ def api_dtcs():
 @app.route("/api/status")
 def api_status():
     data = obd_reader.get_data()
-    return jsonify({"connected": data.get("connected", False), "status": data.get("status", "Unknown"), "last_update": data.get("last_update")})
+    return jsonify({"connected": data.get("connected", False), "status": data.get("status", "Unknown"), "last_update": data.get("last_update"), "restart_pending": config.restart_pending})
 
 
 @app.route("/api/settings", methods=["GET"])
 def api_settings_get():
-    return jsonify(config.get_current_settings())
+    settings, groups = _build_settings_context()
+    return jsonify({"settings": settings, "groups": groups})
+
+
+@app.route("/api/themes")
+def api_themes():
+    return jsonify(config.THEMES)
 
 
 @app.route("/api/settings", methods=["POST"])
@@ -2899,6 +2921,141 @@ def api_dev_command():
         if decoded:
             result["decoded"] = decoded
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Debug — single endpoint for phone-based troubleshooting
+# ---------------------------------------------------------------------------
+
+@app.route("/api/debug")
+def api_debug():
+    """
+    Aggregated debug snapshot for development troubleshooting.
+    Returns everything you'd normally SSH in to check.
+    """
+    import datetime
+
+    # ── OBD connection state ──────────────────────────────────────────────
+    data = obd_reader.get_data()
+    diag = obd_reader.get_diagnostics()
+
+    obd_info = {
+        "connected": data.get("connected", False),
+        "status": data.get("status"),
+        "poll_errors": data.get("poll_errors", 0),
+        "last_update": data.get("last_update"),
+        "last_successful_query": obd_reader._last_successful_query,
+        "seconds_since_last_query": (
+            round(time.time() - obd_reader._last_successful_query, 1)
+            if obd_reader._last_successful_query > 0 else None
+        ),
+        "connection_attempts": diag.get("connection_attempts", 0),
+        "last_connect_time": diag.get("last_connect_time"),
+        "protocol": diag.get("protocol"),
+        "elm_version": diag.get("elm_version"),
+        "bt_mac": diag.get("bt_mac"),
+        "bt_port": diag.get("bt_port"),
+        "bt_channel": diag.get("bt_channel"),
+        "supported_pid_count": len(diag.get("supported_pids", [])),
+        "vin": diag.get("vin"),
+        "vehicle": diag.get("vehicle"),
+    }
+
+    # ── Current config snapshot ───────────────────────────────────────────
+    cfg = {
+        "OBD_MAC": config.OBD_MAC,
+        "OBD_PORT": config.OBD_PORT,
+        "OBD_BAUDRATE": config.OBD_BAUDRATE,
+        "OBD_RECONNECT_DELAY": config.OBD_RECONNECT_DELAY,
+        "OBD_BT_CHANNEL": config.OBD_BT_CHANNEL,
+        "SCAN_PIDS_ON_BOOT": config.SCAN_PIDS_ON_BOOT,
+        "FULLSCREEN": config.FULLSCREEN,
+        "COLOR_THEME": config.COLOR_THEME,
+        "SCREEN_BRIGHTNESS": config.SCREEN_BRIGHTNESS,
+        "restart_pending": config.restart_pending,
+    }
+
+    # ── System info ───────────────────────────────────────────────────────
+    sys_info = _get_system_info()
+    sys_info["platform"] = platform.platform()
+    sys_info["python"] = platform.python_version()
+    sys_info["time"] = datetime.datetime.now().isoformat()
+    sys_info["time_utc"] = datetime.datetime.utcnow().isoformat()
+
+    # Disk usage
+    try:
+        r = subprocess.run(["df", "-h", "/"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            lines = r.stdout.strip().splitlines()
+            if len(lines) >= 2:
+                sys_info["disk"] = lines[1].split()[1:5]  # size, used, avail, use%
+    except Exception:
+        pass
+
+    # ── Active threads ────────────────────────────────────────────────────
+    threads = [
+        {"name": t.name, "daemon": t.daemon, "alive": t.is_alive()}
+        for t in threading.enumerate()
+    ]
+
+    # ── Recent SignalKit journal logs ─────────────────────────────────────
+    logs = []
+    try:
+        r = subprocess.run(
+            ["journalctl", "-u", "signalkit", "--no-pager", "-n", "50",
+             "--output", "short-iso"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            logs = r.stdout.strip().splitlines()
+    except Exception:
+        logs = ["(journalctl not available)"]
+
+    # ── Network interfaces ────────────────────────────────────────────────
+    net = {}
+    try:
+        r = subprocess.run(
+            ["ip", "-brief", "addr"], capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            for line in r.stdout.strip().splitlines():
+                parts = line.split()
+                if len(parts) >= 3:
+                    net[parts[0]] = {"state": parts[1], "addrs": parts[2:]}
+                elif len(parts) == 2:
+                    net[parts[0]] = {"state": parts[1], "addrs": []}
+    except Exception:
+        pass
+
+    # ── Bluetooth adapter state ───────────────────────────────────────────
+    bt_state = None
+    try:
+        r = subprocess.run(
+            ["bluetoothctl", "show"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            bt_state = r.stdout.strip()
+    except Exception:
+        pass
+
+    # ── Git version ───────────────────────────────────────────────────────
+    version = _git_info()
+
+    # ── Full /api/data snapshot ─────────────────────────────────────────
+    data["restart_pending"] = config.restart_pending
+
+    return jsonify({
+        "data": data,
+        "obd": obd_info,
+        "config": cfg,
+        "system": sys_info,
+        "threads": threads,
+        "network": net,
+        "bluetooth": bt_state,
+        "version": version,
+        "logs": logs,
+    })
 
 
 # ---------------------------------------------------------------------------

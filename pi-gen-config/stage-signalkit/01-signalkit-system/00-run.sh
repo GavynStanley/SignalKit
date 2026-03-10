@@ -311,7 +311,7 @@ EOF
 # 12. Display permissions (no X11)
 # ---------------------------------------------------------------------------
 on_chroot << 'EOF'
-usermod -aG video,render,input,dialout pi
+usermod -aG video,render,input,dialout,systemd-journal pi
 EOF
 
 # Allow pi user to access /dev/fb0 and /dev/dri/* without root
@@ -333,5 +333,24 @@ export KIVY_BCM_DISPMANX_ID=2
 EOF
 
 # Same for the service environment — done in the service file itself
+
+# ---------------------------------------------------------------------------
+# 14. Custom MOTD — replace default Debian banner with SignalKit info
+# ---------------------------------------------------------------------------
+# Remove default MOTD and update-motd.d scripts
+on_chroot << 'EOF'
+rm -f /etc/motd
+rm -f /etc/update-motd.d/10-uname
+rm -f /etc/update-motd.d/20-*
+rm -f /etc/update-motd.d/30-*
+rm -f /etc/update-motd.d/50-*
+EOF
+
+# Install SignalKit MOTD script
+install -m 755 files/motd-signalkit \
+    "${ROOTFS_DIR}/etc/update-motd.d/10-signalkit"
+
+# Ensure /etc/motd is empty (dynamic MOTD comes from update-motd.d)
+echo -n > "${ROOTFS_DIR}/etc/motd"
 
 echo "==> [01-signalkit-system] System configuration complete"

@@ -89,6 +89,12 @@ def send_raw_command(hex_cmd: str) -> dict:
 
         response_text = "\n".join(result_lines) if result_lines else "NO DATA"
         return {"ok": True, "command": hex_cmd, "response": response_text, "error": ""}
+    except OSError as e:
+        # Bad file descriptor / serial port closed — connection dropped
+        logger.error(f"Dev console command failed (connection lost): {e}")
+        _set_connection(None)
+        return {"ok": False, "command": hex_cmd, "response": "",
+                "error": "Connection lost — OBD adapter disconnected"}
     except Exception as e:
         logger.error(f"Dev console command failed: {e}")
         return {"ok": False, "command": hex_cmd, "response": "", "error": str(e)}
@@ -140,13 +146,28 @@ def get_data() -> dict:
     """
     Thread-safe snapshot of all current vehicle data.
     Returns a copy so callers can read without holding the lock.
+    Uses lock timeouts to prevent GUI freezes if the OBD thread is stuck.
     """
-    with _data_lock:
-        d = dict(_data)
+    acquired = _data_lock.acquire(timeout=0.5)
+    if not acquired:
+        logger.warning("get_data(): data lock timeout — returning stale snapshot")
+        d = dict(_data)  # best-effort unsynchronized copy
+    else:
+        try:
+            d = dict(_data)
+        finally:
+            _data_lock.release()
     d["trip"] = trip.get_trip()
-    with _diag_lock:
-        d["vin"] = _diag.get("vin")
-        d["vehicle"] = _diag.get("vehicle")
+    acquired = _diag_lock.acquire(timeout=0.5)
+    if not acquired:
+        d["vin"] = None
+        d["vehicle"] = None
+    else:
+        try:
+            d["vin"] = _diag.get("vin")
+            d["vehicle"] = _diag.get("vehicle")
+        finally:
+            _diag_lock.release()
     return d
 
 
@@ -344,7 +365,7 @@ def _read_kia_oil_temp(connection):
             obd.ECU.ENGINE,
             True
         )
-        response = connection.query(cmd, force=True)
+        response = _query_with_timeout(connection, cmd, force=True)
         if response.is_null():
             return None
 
@@ -370,6 +391,42 @@ def _read_kia_oil_temp(connection):
 
 _unsupported_pids: set = set()
 
+# Watchdog: tracks when the last successful OBD query completed.
+# If this falls too far behind, the polling loop is stuck.
+_QUERY_TIMEOUT = 5  # seconds — max time to wait for a single OBD query
+_last_successful_query = 0.0  # timestamp of last successful query
+
+
+def _query_with_timeout(connection, cmd, force=False, timeout=_QUERY_TIMEOUT):
+    """
+    Wrapper around connection.query() that enforces a per-query timeout.
+    Returns the OBDResponse, or a null response on timeout.
+    """
+    result = [None]
+    exc = [None]
+
+    def _do_query():
+        try:
+            result[0] = connection.query(cmd, force=force)
+        except Exception as e:
+            exc[0] = e
+
+    t = threading.Thread(target=_do_query, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+
+    if t.is_alive():
+        # Query is hung — don't wait, return null
+        logger.warning(f"OBD query timeout ({timeout}s) for {cmd.name}")
+        return obd.OBDResponse()  # null response
+
+    if exc[0] is not None:
+        raise exc[0]
+
+    global _last_successful_query
+    _last_successful_query = time.time()
+    return result[0]
+
 
 def _query_safe(connection, cmd_name: str):
     """
@@ -385,7 +442,7 @@ def _query_safe(connection, cmd_name: str):
             _unsupported_pids.add(cmd_name)
             logger.info(f"PID {cmd_name} not supported by vehicle — skipping")
             return None
-        response = connection.query(cmd)
+        response = _query_with_timeout(connection, cmd)
         if response.is_null():
             return None
         return response.value
@@ -513,7 +570,7 @@ def _poll_slow(connection, kia_oil_supported: bool) -> bool:
 
     # Active DTCs — python-OBD returns a list of OBD objects
     try:
-        dtc_response = connection.query(obd.commands.GET_DTC)
+        dtc_response = _query_with_timeout(connection, obd.commands.GET_DTC)
         if not dtc_response.is_null():
             raw_dtcs = dtc_response.value  # List of (code, description) tuples
             codes = [entry[0] for entry in raw_dtcs if entry and entry[0]]
@@ -596,6 +653,86 @@ def _parse_response_value(val):
             "unit": str(val.units),
             "raw": str(val),
         }
+    # OBDResponse.Status objects (PID 01, PID 41) — extract structured fields
+    elif hasattr(val, 'MIL') and hasattr(val, 'DTC_count'):
+        status = {
+            "MIL": val.MIL,
+            "DTC_count": val.DTC_count,
+            "ignition_type": str(val.ignition_type) if hasattr(val, 'ignition_type') else None,
+        }
+        # Extract readiness monitor flags if available
+        for attr in ("misfire", "fuel_system", "component", "catalyst",
+                     "heated_catalyst", "evaporative_system", "secondary_air_system",
+                     "ac_refrigerant", "oxygen_sensor", "oxygen_sensor_heater",
+                     "egr_system"):
+            test = getattr(val, attr, None)
+            if test is not None:
+                status[attr] = {
+                    "available": getattr(test, 'available', None),
+                    "complete": getattr(test, 'complete', None),
+                }
+        return {
+            "value": status,
+            "unit": None,
+            "raw": str(status),
+        }
+    # bytearray/bytes — decode to string (VIN, calibration IDs, etc.)
+    elif isinstance(val, (bytearray, bytes)):
+        decoded = val.decode("ascii", errors="replace").strip("\x00").strip()
+        return {
+            "value": decoded,
+            "unit": None,
+            "raw": decoded,
+        }
+    # Monitor objects (Service 06 on-board monitoring test results)
+    elif hasattr(val, 'tests') or (hasattr(val, '__iter__') and hasattr(val, 'count')):
+        # Check if it's a Monitor by looking for MonitorTest items
+        tests = []
+        raw_parts = []
+        try:
+            for test in val:
+                t = {
+                    "name": getattr(test, 'name', 'Unknown'),
+                    "desc": getattr(test, 'desc', 'Unknown'),
+                    "tid": getattr(test, 'tid', None),
+                }
+                test_val = getattr(test, 'value', None)
+                if test_val is not None and hasattr(test_val, 'magnitude'):
+                    t["value"] = round(float(test_val.magnitude), 6)
+                    t["unit"] = str(test_val.units)
+                    passed = True
+                    mn = getattr(test, 'min', None)
+                    mx = getattr(test, 'max', None)
+                    if mn is not None and hasattr(mn, 'magnitude'):
+                        t["min"] = round(float(mn.magnitude), 6)
+                        if test_val.magnitude < mn.magnitude:
+                            passed = False
+                    if mx is not None and hasattr(mx, 'magnitude'):
+                        t["max"] = round(float(mx.magnitude), 6)
+                        if test_val.magnitude > mx.magnitude:
+                            passed = False
+                    t["passed"] = passed
+                else:
+                    t["value"] = str(test_val) if test_val is not None else None
+                    t["unit"] = None
+                    t["passed"] = None
+                tests.append(t)
+                desc = t.get("desc", "Unknown")
+                val_str = f"{t['value']} {t.get('unit', '')}" if t.get('unit') else str(t['value'])
+                status = "[PASSED]" if t.get("passed") else "[FAILED]" if t.get("passed") is False else ""
+                raw_parts.append(f"{desc} : {val_str} {status}".strip())
+        except TypeError:
+            # Not iterable — fall through to generic handler
+            return {
+                "value": str(val),
+                "unit": None,
+                "raw": str(val),
+            }
+        return {
+            "value": "\n".join(raw_parts),
+            "unit": None,
+            "raw": "\n".join(raw_parts),
+        }
     elif isinstance(val, (list, tuple)):
         return {
             "value": [str(v) for v in val],
@@ -611,7 +748,12 @@ def _parse_response_value(val):
 
 
 def _scan_standard_pids(connection):
-    """Scan all supported standard PIDs (Services 01, 02, 03, 06, 07, 09)."""
+    """Scan all supported standard PIDs (Services 01, 02, 03, 07, 09).
+
+    Service 06 monitors are skipped here — their multi-frame ISO-TP responses
+    can hang the ELM327 emulator.  They are scanned separately via
+    _scan_mode06_monitors() with individual timeout protection.
+    """
     results = []
 
     for cmd in sorted(connection.supported_commands, key=lambda c: str(c)):
@@ -631,8 +773,12 @@ def _scan_standard_pids(connection):
             else:
                 service = str(raw)[:2]
 
+        # Skip Service 06 monitors — handled separately
+        if service == "06":
+            continue
+
         try:
-            response = connection.query(cmd, force=True)
+            response = _query_with_timeout(connection, cmd, force=True)
             if response.is_null():
                 results.append({
                     "service": service,
@@ -660,6 +806,60 @@ def _scan_standard_pids(connection):
                 "raw": f"ERROR: {e}",
             })
 
+    return results
+
+
+def _scan_mode06_monitors(connection):
+    """Scan Service 06 on-board monitoring test results.
+
+    Each monitor query gets a short timeout to prevent hangs from
+    multi-frame ISO-TP responses that the emulator may not handle properly.
+    """
+    results = []
+    mode06_cmds = [
+        cmd for cmd in connection.supported_commands
+        if hasattr(cmd, 'command') and cmd.command
+        and cmd.command[:2] == b'06'
+        and not (cmd.name.startswith("MIDS_") or "Supported" in (cmd.desc or ""))
+    ]
+
+    if not mode06_cmds:
+        return results
+
+    logger.info(f"Scanning {len(mode06_cmds)} Service 06 monitors...")
+
+    for cmd in sorted(mode06_cmds, key=lambda c: c.name):
+        try:
+            response = _query_with_timeout(connection, cmd, force=True, timeout=3)
+            if response.is_null():
+                results.append({
+                    "service": "06",
+                    "pid": cmd.name,
+                    "desc": cmd.desc if hasattr(cmd, 'desc') else "",
+                    "value": None,
+                    "unit": None,
+                    "raw": "NO DATA",
+                })
+            else:
+                parsed = _parse_response_value(response.value)
+                results.append({
+                    "service": "06",
+                    "pid": cmd.name,
+                    "desc": cmd.desc if hasattr(cmd, 'desc') else "",
+                    **parsed,
+                })
+        except Exception as e:
+            logger.debug(f"Mode 06 monitor {cmd.name} failed: {e}")
+            results.append({
+                "service": "06",
+                "pid": cmd.name,
+                "desc": cmd.desc if hasattr(cmd, 'desc') else "",
+                "value": None,
+                "unit": None,
+                "raw": f"ERROR: {e}",
+            })
+
+    logger.info(f"Service 06 scan complete: {len(results)} monitors")
     return results
 
 
@@ -808,10 +1008,28 @@ def _decode_kia_mode22(pid_hex, raw_hex_str):
     return fields if fields else None
 
 
+def _elm_send_raw(elm, cmd_str):
+    """Send a raw command via ELM327 and return joined response string."""
+    raw_lines = elm._ELM327__send(cmd_str.encode("ascii"))
+    if not raw_lines:
+        return ""
+    return " ".join(
+        l.decode("ascii", errors="replace") if isinstance(l, bytes) else str(l)
+        for l in raw_lines
+    ).strip()
+
+
 def _scan_mode22_pids(connection):
     """
-    Probe Kia/Hyundai Mode 22 extended PIDs via raw ELM327 commands.
-    These are manufacturer-specific and not in the standard OBD2 spec.
+    Probe Kia/Hyundai Mode 22 (UDS ReadDataByIdentifier) extended PIDs.
+
+    The 2021+ Kia Forte requires:
+      1. Set CAN header to target the specific ECU module
+      2. Send '10 03' to enter extendedDiagnosticSession (UDS service 0x10)
+      3. Send '22 XXXX' to read each DID (UDS service 0x22)
+
+    Without the diagnostic session, the ECU returns 7F 22 11
+    (serviceNotSupported) for all DIDs.
     """
     results = []
     elm = connection.interface
@@ -819,41 +1037,56 @@ def _scan_mode22_pids(connection):
         logger.warning("Cannot scan Mode 22 — no ELM327 interface")
         return results
 
-    # Save original header so we can restore it
-    original_header = None
-
     for header, module_name in _KIA_MODULES.items():
         # Set CAN header to target this module
         try:
-            elm._ELM327__send(f"ATSH {header}".encode("ascii"))
+            _elm_send_raw(elm, f"ATSH {header}")
         except Exception as e:
             logger.debug(f"Failed to set header {header}: {e}")
             continue
 
+        # Enter extended diagnostic session (UDS 10 03)
+        # This unlocks manufacturer-specific DIDs on many Kia/Hyundai ECUs
+        try:
+            session_resp = _elm_send_raw(elm, "1003")
+            # Positive response: 50 03 ... | Negative: 7F 10 XX
+            if "7F" in session_resp:
+                logger.debug(f"Module {header} ({module_name}): extended session rejected — {session_resp}")
+                # Still try default session reads — some modules respond without it
+            else:
+                logger.debug(f"Module {header} ({module_name}): extended session opened")
+        except Exception as e:
+            logger.debug(f"Module {header} session request failed: {e}")
+
         module_found_pids = 0
 
-        for pid_hex, pid_desc in _KIA_MODE22_PIDS.items():
+        for did_hex, pid_desc in _KIA_MODE22_PIDS.items():
             try:
-                raw_lines = elm._ELM327__send(pid_hex.encode("ascii"))
-                if not raw_lines:
+                # Send as UDS Service 22 + DID (e.g., "22F190" not just "F190")
+                cmd = f"22{did_hex}"
+                resp = _elm_send_raw(elm, cmd)
+
+                if not resp:
                     continue
 
-                # Join response lines
-                resp = " ".join(
-                    l.decode("ascii", errors="replace") if isinstance(l, bytes) else str(l)
-                    for l in raw_lines
-                ).strip()
+                # Skip error/empty/negative responses
+                # 7F = UDS negative response (e.g. "7E8 03 7F 22 31" = requestOutOfRange)
+                if "NO DATA" in resp or "ERROR" in resp or "?" in resp or "7F" in resp:
+                    continue
 
-                # Skip error/empty responses
-                if not resp or "NO DATA" in resp or "ERROR" in resp or "?" in resp:
+                # Validate the response is actually a Service 22 positive response (62 XX XX)
+                # The emulator may echo back Mode 21 responses (61 XX) if it interprets
+                # "222103" as service 21 — filter those out
+                if "62" not in resp:
+                    logger.debug(f"Mode 22 {header}/{did_hex}: no '62' positive response prefix — {resp}")
                     continue
 
                 # Try to decode the raw response
-                decoded_fields = _decode_kia_mode22(pid_hex, resp)
+                decoded_fields = _decode_kia_mode22(did_hex, resp)
 
                 results.append({
                     "service": "22",
-                    "pid": pid_hex,
+                    "pid": did_hex,
                     "desc": f"{module_name} — {pid_desc}",
                     "module": module_name,
                     "header": header,
@@ -865,14 +1098,20 @@ def _scan_mode22_pids(connection):
                 module_found_pids += 1
 
             except Exception as e:
-                logger.debug(f"Mode 22 probe {header}/{pid_hex} failed: {e}")
+                logger.debug(f"Mode 22 probe {header}/{did_hex} failed: {e}")
 
         if module_found_pids > 0:
             logger.info(f"Module {header} ({module_name}): {module_found_pids} extended PIDs found")
 
+        # Close diagnostic session — send '10 01' (return to default session)
+        try:
+            _elm_send_raw(elm, "1001")
+        except Exception:
+            pass
+
     # Restore default header (engine ECU)
     try:
-        elm._ELM327__send(b"ATSH 7E0")
+        _elm_send_raw(elm, "ATSH 7E0")
     except Exception:
         pass
 
@@ -888,17 +1127,23 @@ def _scan_all_pids(connection):
     logger.info("Starting full PID scan (all services)...")
     _update("status", "Scanning PIDs...")
 
-    # Standard PIDs
+    # Standard PIDs (Services 01, 02, 03, 07, 09)
     standard = _scan_standard_pids(connection)
     logger.info(f"Standard scan: {len(standard)} PIDs")
+
+    # Service 06 monitors (separate to avoid multi-frame hangs)
+    monitors = _scan_mode06_monitors(connection)
+    logger.info(f"Service 06 scan: {len(monitors)} monitors")
 
     # Mode 22 extended PIDs
     extended = _scan_mode22_pids(connection)
     logger.info(f"Extended scan (Mode 22): {len(extended)} PIDs")
 
+    all_pids = standard + monitors + extended
+
     # Group by service
     by_service = {}
-    for pid in standard + extended:
+    for pid in all_pids:
         svc = pid.get("service", "??")
         if svc not in by_service:
             by_service[svc] = []
@@ -906,9 +1151,9 @@ def _scan_all_pids(connection):
 
     with _pid_snapshot_lock:
         _pid_snapshot["scanned_at"] = time.time()
-        _pid_snapshot["pids"] = standard + extended
+        _pid_snapshot["pids"] = all_pids
         _pid_snapshot["by_service"] = by_service
-        _pid_snapshot["total"] = len(standard) + len(extended)
+        _pid_snapshot["total"] = len(all_pids)
 
     _update("status", "Connected")
     logger.info(f"Full PID scan complete: {len(standard) + len(extended)} total PIDs across {len(by_service)} services")
@@ -931,27 +1176,58 @@ class OBDReader(threading.Thread):
         self._stop_event.set()
         logger.info("OBDReader stop requested")
 
+    _MAX_CONNECT_ATTEMPTS = 10  # Give up after this many failed connection attempts
+
     def run(self):
         """Main thread loop — connects and polls until stop() is called."""
         logger.info("OBDReader thread started")
+        connect_failures = 0
 
         while not self._stop_event.is_set():
             try:
-                self._connect_and_poll()
+                connected = self._connect_and_poll(attempt=connect_failures + 1)
+                if connected:
+                    # Successfully connected and polled — reset failure counter
+                    connect_failures = 0
+                else:
+                    connect_failures += 1
+                    remaining = self._MAX_CONNECT_ATTEMPTS - connect_failures
+                    logger.warning(f"Connection attempt {connect_failures}/{self._MAX_CONNECT_ATTEMPTS} failed"
+                                   f" — {remaining} attempts remaining")
+                    if connect_failures >= self._MAX_CONNECT_ATTEMPTS:
+                        logger.error("Max connection attempts reached — giving up. "
+                                     "Check OBD adapter pairing and power.")
+                        _update_many({
+                            "connected": False,
+                            "status": "OBD adapter not found — check pairing and power, then restart SignalKit",
+                        })
+                        # Stop retrying — sit idle until SignalKit is restarted
+                        self._stop_event.wait()
+                        break
             except Exception as e:
                 logger.error(f"OBDReader unexpected error: {e}")
                 _update_many({"connected": False, "status": f"Error: {e}"})
-                # Wait before retrying
+                connect_failures += 1
+                if connect_failures >= self._MAX_CONNECT_ATTEMPTS:
+                    _update_many({
+                        "connected": False,
+                        "status": "OBD adapter not found — check pairing and power, then restart SignalKit",
+                    })
+                    self._stop_event.wait()
+                    break
                 self._stop_event.wait(config.OBD_RECONNECT_DELAY)
 
         logger.info("OBDReader thread stopped")
 
-    def _connect_and_poll(self):
+    def _connect_and_poll(self, attempt=1):
         """
         Attempt to connect to the OBD2 adapter and start polling.
         Runs the fast/slow poll loop until disconnected or stopped.
+        Returns True if we successfully connected (even if later disconnected).
+        Returns False if we failed to connect at all.
         """
-        _update_many({"connected": False, "status": "Connecting to OBD2..."})
+        status_msg = f"Connecting to OBD2... ({attempt})"
+        _update_many({"connected": False, "status": status_msg})
 
         # Skip Bluetooth setup on macOS or when using a non-rfcomm port
         # (e.g. ELM327-emulator on a virtual serial port)
@@ -964,16 +1240,15 @@ class OBDReader(threading.Thread):
             time.sleep(2)  # Give Bluetooth time to settle
 
             if not bind_rfcomm():
-                _update("status", "rfcomm bind failed — retrying...")
+                logger.warning("rfcomm bind failed")
                 self._stop_event.wait(config.OBD_RECONNECT_DELAY)
-                return
+                return False
         else:
             logger.info("Skipping Bluetooth setup (port=%s, platform=%s)",
                         config.OBD_PORT, platform.system())
 
         # Connect via python-OBD
         logger.info(f"Connecting to OBD2 on {config.OBD_PORT}...")
-        _update("status", f"Opening {config.OBD_PORT}...")
 
         try:
             connection = obd.OBD(
@@ -984,16 +1259,14 @@ class OBDReader(threading.Thread):
             )
         except Exception as e:
             logger.error(f"obd.OBD() connection failed: {e}")
-            _update("status", f"Connection failed: {e}")
             self._stop_event.wait(config.OBD_RECONNECT_DELAY)
-            return
+            return False
 
         if not connection.is_connected():
             logger.warning("OBD connection returned but is not connected")
-            _update("status", "OBD not connected — check adapter power")
             connection.close()
             self._stop_event.wait(config.OBD_RECONNECT_DELAY)
-            return
+            return False
 
         logger.info("OBD2 connected successfully")
         _unsupported_pids.clear()  # Re-check PID support on each new connection
@@ -1009,7 +1282,7 @@ class OBDReader(threading.Thread):
             except Exception:
                 _diag["protocol"] = "Unknown"
             try:
-                _diag["elm_version"] = str(connection.query(obd.commands.ELM_VERSION).value or "Unknown")
+                _diag["elm_version"] = str(_query_with_timeout(connection, obd.commands.ELM_VERSION).value or "Unknown")
             except Exception:
                 _diag["elm_version"] = "Unknown"
             try:
@@ -1020,7 +1293,7 @@ class OBDReader(threading.Thread):
 
             # Read VIN and decode vehicle info
             try:
-                vin_resp = connection.query(obd.commands.VIN, force=True)
+                vin_resp = _query_with_timeout(connection, obd.commands.VIN, force=True)
                 if not vin_resp.is_null():
                     raw_val = vin_resp.value
                     # python-OBD returns VIN as bytearray or string
@@ -1039,12 +1312,19 @@ class OBDReader(threading.Thread):
                 _diag["vin"] = None
                 _diag["vehicle"] = None
 
-        # Scan all supported PIDs once on connect
-        _scan_all_pids(connection)
+        # Scan all supported PIDs once on connect (if enabled)
+        if config.SCAN_PIDS_ON_BOOT:
+            _scan_all_pids(connection)
+        else:
+            logger.info("PID scan on boot disabled — skipping")
 
         # Track whether optional PIDs are supported
         kia_oil_supported = True
         fuel_rate_supported = True
+
+        # Initialize watchdog timestamp
+        global _last_successful_query
+        _last_successful_query = time.time()
 
         # Timing trackers
         last_slow_poll = 0.0
@@ -1059,6 +1339,12 @@ class OBDReader(threading.Thread):
             if not connection.is_connected():
                 logger.warning("OBD connection lost — reconnecting...")
                 _update_many({"connected": False, "status": "Connection lost — reconnecting..."})
+                break
+
+            # Watchdog: if no successful query in 15s, the connection is hung
+            if _last_successful_query > 0 and (loop_start - _last_successful_query) > 15:
+                logger.error("Watchdog: no successful OBD query in 15s — forcing reconnect")
+                _update_many({"connected": False, "status": "Connection stalled — reconnecting..."})
                 break
 
             try:
@@ -1102,3 +1388,5 @@ class OBDReader(threading.Thread):
             _update_many({"connected": False, "status": "Reconnecting..."})
             logger.info("Disconnected — will reconnect")
             self._stop_event.wait(config.OBD_RECONNECT_DELAY)
+
+        return True  # We did connect successfully (even if we later disconnected)

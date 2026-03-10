@@ -32,6 +32,10 @@ except FileNotFoundError:
 # Callback invoked after a setting is saved. Set by display.py at startup.
 _on_setting_changed = None
 
+# True when a restart-required setting has been changed but not yet restarted.
+# Lives only in memory — cleared automatically on reboot/restart.
+restart_pending = False
+
 # Path to the user overrides file on the FAT32 boot partition.
 # Tries the newer Pi OS path first (/boot/firmware), then legacy (/boot),
 # then a local fallback for development on non-Pi machines.
@@ -83,6 +87,7 @@ UNITS_SPEED = "mph"              # "mph" or "kmh"
 UNITS_TEMP = "C"                 # "C" (Celsius) or "F" (Fahrenheit)
 COLOR_THEME = "red"              # Accent color theme
 SHOW_SPARKLINES = 1              # 1 = show sparkline graphs, 0 = hide
+SCREEN_BRIGHTNESS = 1.0          # xrandr brightness (0.3=dim, 1.0=normal, 2.0=bright)
 
 # --- Theme Presets ---
 THEMES = {
@@ -108,6 +113,7 @@ LAYOUT_SLOW = ["iat", "oil", "fuel_trim"]
 # --- Polling Intervals (seconds) ---
 FAST_POLL_INTERVAL = 1.0         # RPM, speed, throttle, engine load
 SLOW_POLL_INTERVAL = 5.0         # Coolant temp, battery voltage, fuel trim, IAT
+SCAN_PIDS_ON_BOOT = 1            # 1 = scan all PIDs on connect, 0 = skip
 
 # --- Warning Thresholds ---
 COOLANT_OVERHEAT_C = 105         # Coolant temperature overheat warning (°C)
@@ -201,6 +207,14 @@ EDITABLE_SETTINGS = {
         "restart": True,
         "description": "How often to poll coolant temp, battery voltage, and fuel trim.",
     },
+    "SCAN_PIDS_ON_BOOT": {
+        "label": "Scan PIDs on Connect",
+        "type": "select",
+        "options": [("1", "On"), ("0", "Off")],
+        "cast": "int",
+        "restart": False,
+        "description": "Scan all supported PIDs when connecting. Disable for faster startup.",
+    },
     "HOTSPOT_SSID": {
         "label": "WiFi Hotspot Name (SSID)",
         "type": "str",
@@ -243,6 +257,12 @@ EDITABLE_SETTINGS = {
         "cast": "int",
         "restart": False,
         "description": "Tiny trend graphs on the HDMI dashboard cards.",
+    },
+    "SCREEN_BRIGHTNESS": {
+        "label": "Screen Brightness",
+        "type": "float", "min": 0.3, "max": 2.0,
+        "restart": False,
+        "description": "Display brightness via xrandr. 1.0 = normal, 2.0 = max for daylight.",
     },
     "LAYOUT_METRICS": {
         "label": "Metrics Row Cards",
@@ -427,17 +447,30 @@ def save_setting(key, raw_value):
         setattr(module, key, value)
     _logger.info(f"Setting updated: {key} = {value!r}")
 
-    # Notify the HDMI display (if running) so it picks up the change live
-    if _on_setting_changed:
+    # Apply brightness immediately if changed
+    if key == "SCREEN_BRIGHTNESS":
+        apply_brightness(value)
+
+    # Only notify the HDMI display for settings that affect the live dashboard
+    # (theme, units, sparklines, layout, thresholds). Skip for restart-required
+    # settings since those need a full restart anyway, and triggering a display
+    # reload just causes a distracting splash screen flash.
+    _LIVE_DISPLAY_KEYS = {
+        "COLOR_THEME", "UNITS_SPEED", "UNITS_TEMP", "TIME_24HR",
+        "SHOW_SPARKLINES", "LAYOUT_METRICS", "LAYOUT_SLOW",
+        "COOLANT_OVERHEAT_C", "BATTERY_LOW_V", "BATTERY_CRITICAL_V",
+        "RPM_REDLINE", "SCREEN_BRIGHTNESS",
+    }
+    if key in _LIVE_DISPLAY_KEYS and _on_setting_changed:
         try:
-            _logger.info("Notifying display of config change")
+            _logger.info("Notifying display of config change: %s", key)
             _on_setting_changed()
         except Exception as e:
             _logger.warning(f"Failed to notify display: {e}")
-    else:
-        _logger.debug("No display callback registered")
 
     if meta.get("restart"):
+        global restart_pending
+        restart_pending = True
         return True, "Saved — restart SignalKit for this change to take effect"
     return True, "Saved"
 
@@ -459,6 +492,37 @@ def get_current_settings() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Screen brightness via xrandr
+# ---------------------------------------------------------------------------
+
+import subprocess as _subprocess
+import shutil as _shutil
+
+def apply_brightness(level=None):
+    """Set screen brightness via xrandr. No-op if xrandr is not available."""
+    if level is None:
+        level = SCREEN_BRIGHTNESS
+    level = max(0.3, min(2.0, float(level)))
+    if not _shutil.which("xrandr"):
+        return
+    try:
+        # Find the connected output name
+        out = _subprocess.check_output(["xrandr", "--current"],
+                                       stderr=_subprocess.DEVNULL).decode()
+        for line in out.splitlines():
+            if " connected" in line:
+                output_name = line.split()[0]
+                _subprocess.run(["xrandr", "--output", output_name,
+                                 "--brightness", str(level)],
+                                stderr=_subprocess.DEVNULL)
+                _logger.info(f"Screen brightness set to {level} on {output_name}")
+                return
+    except Exception as e:
+        _logger.warning(f"Failed to set brightness: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Apply overrides immediately when this module is imported
 # ---------------------------------------------------------------------------
 load_overrides()
+apply_brightness()

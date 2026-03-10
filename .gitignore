@@ -43,5 +43,7 @@ mobile
 
 # Testing files
 emulator_patch.py
+dtc_test.py
 preview_web.py
 preview.py
+*.pid.json

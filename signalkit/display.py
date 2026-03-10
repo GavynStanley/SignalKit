@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import socket
+import subprocess
 import time
 
 import webview
@@ -233,6 +234,13 @@ def _build_html():
     theme = app_config.get_theme()
     accent = theme["accent"]
     glow = theme["glow"]
+    try:
+        git_hash = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(__file__), stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        git_hash = "?"
     return f"""<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
@@ -416,6 +424,8 @@ tailwind.config = {{
     <span id="trip-dist">-- mi</span>
     <span id="trip-avg-mpg">-- mpg</span>
   </span>
+  <span class="w-px h-3 bg-zinc-700"></span>
+  <span id="version-badge" class="text-[0.58rem] font-mono text-zinc-600">{git_hash}</span>
   <span class="w-px h-3 bg-zinc-700"></span>
   <span id="clock" class="text-xs text-zinc-500 tabular-nums">--:--</span>
 </div>
@@ -873,8 +883,19 @@ def run_display():
         logger.error(f"Failed to build dashboard HTML: {e}", exc_info=True)
         html = _build_error_html(e, "The dashboard failed to render. Check journalctl -u signalkit for details.")
 
+    # Show git hash in window title for desktop testing
+    _title = "SignalKit Dashboard"
+    try:
+        _hash = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(__file__), stderr=subprocess.DEVNULL
+        ).decode().strip()
+        _title += f"  [{_hash}]"
+    except Exception:
+        pass
+
     _window = webview.create_window(
-        "SignalKit Dashboard",
+        _title,
         html=html,
         width=app_config.SCREEN_WIDTH,
         height=app_config.SCREEN_HEIGHT,
