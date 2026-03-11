@@ -19,10 +19,38 @@ ApplicationWindow {
     property color accentDim: Qt.rgba(accent.r, accent.g, accent.b, 0.15)
     property string currentView: "home"
 
-    // -- Sidebar Dock --
+    // -- View metadata for recent dock buttons --
+    property var viewMeta: ({
+        "dashboard": { icon: "bolt.svg",     label: "OBD",      color: root.accent },
+        "settings":  { icon: "settings.svg", label: "Settings",  color: "#a1a1aa"   },
+        "dev":       { icon: "terminal.svg", label: "Dev",       color: "#f59e0b"   }
+    })
+
+    // -- Recent views (last 2 non-home views visited, most recent first) --
+    property var recentViews: []
+
+    onCurrentViewChanged: {
+        // Track recent views (skip home)
+        if (currentView !== "home") {
+            var updated = recentViews.filter(function(v) { return v !== currentView })
+            updated.unshift(currentView)
+            if (updated.length > 2) updated = updated.slice(0, 2)
+            recentViews = updated
+        }
+
+        // Calculate slide direction for transitions
+        var viewOrder = ["home", "dashboard", "settings", "dev"]
+        var oldIdx = viewOrder.indexOf(previousView)
+        var newIdx = viewOrder.indexOf(currentView)
+        var goingForward = (currentView === "home") ? false : (previousView === "home") ? true : newIdx > oldIdx
+        mainContent._slideDirection = goingForward ? 1 : -1
+        previousView = currentView
+    }
+
+    // -- Sidebar Dock (CarPlay-style) --
     Rectangle {
         id: dock
-        width: 56; height: parent.height
+        width: 72; height: parent.height
         color: "#111113"
         z: 10
         Rectangle { width: 1; height: parent.height; anchors.right: parent.right; color: "#27272a" }
@@ -30,9 +58,10 @@ ApplicationWindow {
         ColumnLayout {
             anchors.fill: parent
             anchors.topMargin: 12
-            anchors.bottomMargin: 8
-            spacing: 4
+            anchors.bottomMargin: 10
+            spacing: 6
 
+            // Home / app grid button (always present)
             DockButton {
                 icon: "" + iconsPath + "home.svg"
                 label: "Home"
@@ -40,26 +69,29 @@ ApplicationWindow {
                 onClicked: currentView = "home"
                 iconColor: "#a1a1aa"
             }
-            DockButton {
-                icon: "" + iconsPath + "bolt.svg"
-                label: "OBD"
-                active: currentView === "dashboard"
-                onClicked: currentView = "dashboard"
-                iconColor: root.accent
+
+            // Separator
+            Rectangle {
+                Layout.preferredWidth: 32; Layout.preferredHeight: 1
+                Layout.alignment: Qt.AlignHCenter
+                color: "#27272a"
+                visible: root.recentViews.length > 0
             }
-            DockButton {
-                icon: "" + iconsPath + "settings.svg"
-                label: "Settings"
-                active: currentView === "settings"
-                onClicked: currentView = "settings"
-                iconColor: "#a1a1aa"
-            }
-            DockButton {
-                icon: "" + iconsPath + "terminal.svg"
-                label: "Dev"
-                active: currentView === "dev"
-                onClicked: currentView = "dev"
-                iconColor: "#a1a1aa"
+
+            // Recent view slots (up to 2)
+            Repeater {
+                model: root.recentViews.length
+
+                DockButton {
+                    required property int index
+                    property string viewId: root.recentViews[index]
+                    property var meta: root.viewMeta[viewId] || { icon: "bolt.svg", label: "?", color: "#a1a1aa" }
+                    icon: "" + iconsPath + meta.icon
+                    label: meta.label
+                    active: root.currentView === viewId
+                    iconColor: meta.color
+                    onClicked: root.currentView = viewId
+                }
             }
 
             Item { Layout.fillHeight: true }
@@ -67,18 +99,19 @@ ApplicationWindow {
             // Exit button
             Rectangle {
                 Layout.alignment: Qt.AlignHCenter
-                width: 32; height: 32; radius: 8
+                width: 40; height: 40; radius: 12
                 color: exitMa.containsMouse ? "#2a1215" : "transparent"
                 Image {
                     anchors.centerIn: parent
                     source: "" + iconsPath + "power.svg"
-                    sourceSize: Qt.size(16, 16)
+                    sourceSize: Qt.size(18, 18)
                     smooth: true
                 }
                 MouseArea {
                     id: exitMa
                     anchors.fill: parent
                     hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
                     onClicked: Qt.quit()
                 }
             }
@@ -127,11 +160,15 @@ ApplicationWindow {
             Text {
                 text: bridge.clockText
                 font.pixelSize: 10; color: "#52525b"
-                font.features: {"tnum": 1}
+                // font.features: {"tnum": 1}  // Qt 6.6+ only
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
     }
+
+    // -- Transition config --
+    property string previousView: "home"
+    property int _transitionDuration: 250
 
     // -- Main content area --
     Item {
@@ -142,33 +179,57 @@ ApplicationWindow {
         anchors.bottom: parent.bottom
         clip: true
 
+        property int _slideDirection: 1  // 1 = slide from right, -1 = slide from left
+        property real _slideOffset: 40   // pixels to slide
+
         HomeView {
             id: homeView
-            anchors.fill: parent
-            visible: currentView === "home"
+            width: parent.width; height: parent.height
             accent: root.accent
-            onNavigate: (view) => currentView = view
+            onNavigate: (view) => root.currentView = view
+
+            opacity: root.currentView === "home" ? 1 : 0
+            transform: Translate { x: root.currentView === "home" ? 0 : mainContent._slideOffset * -mainContent._slideDirection }
+            Behavior on opacity { NumberAnimation { duration: root._transitionDuration; easing.type: Easing.OutCubic } }
+
+            visible: opacity > 0
         }
 
         DashboardView {
             id: dashView
-            anchors.fill: parent
-            visible: currentView === "dashboard"
+            width: parent.width; height: parent.height
             accent: root.accent
+
+            opacity: root.currentView === "dashboard" ? 1 : 0
+            transform: Translate { x: root.currentView === "dashboard" ? 0 : mainContent._slideOffset * mainContent._slideDirection }
+            Behavior on opacity { NumberAnimation { duration: root._transitionDuration; easing.type: Easing.OutCubic } }
+
+            visible: opacity > 0
         }
 
         SettingsView {
             id: settingsView
-            anchors.fill: parent
-            visible: currentView === "settings"
+            width: parent.width; height: parent.height
             accent: root.accent
+            locked: bridge.vehicleMoving
+
+            opacity: root.currentView === "settings" ? 1 : 0
+            transform: Translate { x: root.currentView === "settings" ? 0 : mainContent._slideOffset * mainContent._slideDirection }
+            Behavior on opacity { NumberAnimation { duration: root._transitionDuration; easing.type: Easing.OutCubic } }
+
+            visible: opacity > 0
         }
 
         DevConsoleView {
             id: devView
-            anchors.fill: parent
-            visible: currentView === "dev"
+            width: parent.width; height: parent.height
             accent: root.accent
+
+            opacity: root.currentView === "dev" ? 1 : 0
+            transform: Translate { x: root.currentView === "dev" ? 0 : mainContent._slideOffset * mainContent._slideDirection }
+            Behavior on opacity { NumberAnimation { duration: root._transitionDuration; easing.type: Easing.OutCubic } }
+
+            visible: opacity > 0
         }
     }
 }

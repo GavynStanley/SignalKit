@@ -24,6 +24,9 @@ plymouth-themes
 # --- Qt6 / QML display (EGLFS — direct framebuffer, no X11 needed) ---
 # PyQt6 from system apt (PySide6 has no aarch64 Linux wheels on PyPI).
 python3-pyqt6
+python3-pyqt6.qtquick
+qt6-image-formats-plugins
+libqt6svg6
 qml6-module-qtquick
 qml6-module-qtquick-controls
 qml6-module-qtquick-layouts

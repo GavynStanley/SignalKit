@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import "../components"
 
 Item {
     id: dashRoot
@@ -9,6 +8,25 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        // Status bar
+        Rectangle {
+            Layout.fillWidth: true; Layout.preferredHeight: 26
+            color: "#18181b"
+            Rectangle { width: parent.width; height: 1; anchors.bottom: parent.bottom; color: "#27272a" }
+
+            RowLayout {
+                anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10
+                spacing: 6
+                Rectangle { width: 7; height: 7; radius: 3.5; color: "#22c55e" }
+                Text { text: "Connected — Demo Mode"; font.pixelSize: 11; color: "#71717a" }
+                Item { Layout.fillWidth: true }
+                Text { text: "0:42"; font.pixelSize: 10; color: "#52525b"; font.features: {"tnum": 1} }
+                Text { text: "12.3 mi"; font.pixelSize: 10; color: "#52525b"; font.features: {"tnum": 1} }
+                Rectangle { width: 1; height: 12; color: "#3f3f46" }
+                Text { text: bridge.clockText; font.pixelSize: 11; color: "#52525b"; font.features: {"tnum": 1} }
+            }
+        }
 
         // Dashboard grid
         Item {
@@ -26,7 +44,7 @@ Item {
                     Layout.rowSpan: 1
                     Layout.columnSpan: 1
                     label: "RPM"
-                    value: bridge.rpm
+                    value: "3,247"
                     accent: dashRoot.accent
 
                     // RPM bar
@@ -37,13 +55,12 @@ Item {
                         height: 4; radius: 2
                         color: "#27272a"
                         Rectangle {
-                            width: parent.width * bridge.rpmRatio; height: parent.height; radius: 2
+                            width: parent.width * 0.45; height: parent.height; radius: 2
                             gradient: Gradient {
                                 orientation: Gradient.Horizontal
                                 GradientStop { position: 0; color: dashRoot.accent }
-                                GradientStop { position: 1; color: bridge.rpmRatio > 0.85 ? "#ef4444" : Qt.lighter(dashRoot.accent, 1.3) }
+                                GradientStop { position: 1; color: Qt.lighter(dashRoot.accent, 1.3) }
                             }
-                            Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
                         }
                     }
                 }
@@ -52,8 +69,8 @@ Item {
                 DashCard {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     label: "Speed"
-                    value: bridge.speed
-                    unit: bridge.speedUnit
+                    value: "47"
+                    unit: "MPH"
                     accent: dashRoot.accent
                 }
 
@@ -61,8 +78,8 @@ Item {
                 DashCard {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     label: "Coolant"
-                    value: bridge.coolant
-                    unit: bridge.tempUnit
+                    value: "92"
+                    unit: "°C"
                     accent: dashRoot.accent
                 }
 
@@ -70,17 +87,17 @@ Item {
                 DashCard {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     label: "Battery"
-                    value: bridge.batteryVoltage
+                    value: "14.2"
                     unit: "V"
                     accent: dashRoot.accent
-                    valueColor: bridge.batteryColor
+                    valueColor: "#22c55e"
                 }
 
                 // Throttle
                 DashCard {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     label: "Throttle"
-                    value: bridge.throttle
+                    value: "23"
                     unit: "%"
                     accent: dashRoot.accent
                 }
@@ -89,7 +106,7 @@ Item {
                 DashCard {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     label: "Engine Load"
-                    value: bridge.engineLoad
+                    value: "31"
                     unit: "%"
                     accent: dashRoot.accent
                 }
@@ -108,8 +125,8 @@ Item {
                             color: "#52525b"
                         }
                         Text {
-                            text: bridge.dtcText
-                            font.pixelSize: 10; color: bridge.dtcColor
+                            text: "No active fault codes"
+                            font.pixelSize: 10; color: "#22c55e"
                         }
                     }
                 }

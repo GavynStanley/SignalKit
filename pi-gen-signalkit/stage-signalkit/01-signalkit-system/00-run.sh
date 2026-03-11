@@ -50,6 +50,18 @@ apt-get remove -y --purge \
     logrotate cron \
     2>/dev/null || true
 
+# Remove X11 — Qt EGLFS renders directly to DRM/KMS, no Xorg needed.
+# Xorg grabs DRM master and blocks EGLFS from accessing the display.
+apt-get remove -y --purge \
+    xserver-xorg xserver-xorg-core xserver-xorg-legacy \
+    xserver-xorg-video-fbdev xserver-xorg-video-fbturbo \
+    xserver-xorg-input-libinput xserver-xorg-input-evdev \
+    x11-common x11-utils x11-xserver-utils \
+    lightdm lightdm-gtk-greeter \
+    lxde lxde-core lxpanel lxterminal lxappearance \
+    pcmanfm desktop-file-utils \
+    2>/dev/null || true
+
 # Clean up
 apt-get autoremove -y --purge
 apt-get clean
@@ -312,15 +324,24 @@ EOF
 # ---------------------------------------------------------------------------
 on_chroot << 'EOF'
 usermod -aG video,render,input,dialout,systemd-journal pi
+
+# Disable any desktop/display manager — EGLFS needs exclusive DRM master
+systemctl disable lightdm 2>/dev/null || true
+systemctl disable gdm3 2>/dev/null || true
+systemctl disable xdm 2>/dev/null || true
+systemctl set-default multi-user.target
+
+# Create runtime directory for Qt
+install -d -m 700 /tmp/runtime-signalkit
 EOF
 
-# Allow pi user to access /dev/fb0 and /dev/dri/* without root
+# Allow access to /dev/fb0 and /dev/dri/* (belt-and-suspenders with root service)
 cat > "${ROOTFS_DIR}/etc/udev/rules.d/99-framebuffer.rules" << 'EOF'
-KERNEL=="fb*", MODE="0660", GROUP="video"
+KERNEL=="fb*", MODE="0666"
 EOF
 
 cat > "${ROOTFS_DIR}/etc/udev/rules.d/99-gpu.rules" << 'EOF'
-SUBSYSTEM=="drm", MODE="0660", GROUP="render"
+SUBSYSTEM=="drm", MODE="0666"
 EOF
 
 # ---------------------------------------------------------------------------

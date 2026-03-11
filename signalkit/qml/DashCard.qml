@@ -31,7 +31,7 @@ Rectangle {
             font.pixelSize: 28
             font.weight: Font.ExtraBold
             color: card.valueColor
-            // font.features: {"tnum": 1}  // Qt 6.6+ only — Pi has older Qt
+            font.features: {"tnum": 1}
         }
 
         Text {

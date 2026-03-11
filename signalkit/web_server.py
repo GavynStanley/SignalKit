@@ -1,23 +1,36 @@
 # =============================================================================
-# web_server.py - Flask Web Server for Phone Access
+# web_server.py - SignalKit REST API
 # =============================================================================
-# Serves a mobile-friendly dashboard that phones can access by connecting to
-# the SignalKit WiFi hotspot and navigating to http://192.168.4.1:5000
+# JSON API server accessible via the SignalKit WiFi hotspot at
+# http://192.168.4.1:5000. No HTML UI — the on-device display is Qt/QML
+# (qml_display.py) and phone clients consume these endpoints directly.
 #
 # Endpoints:
-#   GET  /              - Live dashboard (real-time updates via SSE)
-#   GET  /settings      - Settings page (edit config from phone browser)
-#   GET  /update        - OTA update page (pull latest code from git)
-#   GET  /api/data      - JSON snapshot of all current OBD2 data
-#   GET  /api/stream    - SSE event stream for live dashboard updates
-#   GET  /api/dtcs      - JSON list of active DTC codes
-#   GET  /api/status    - Connection health check
-#   GET  /api/settings  - JSON of all editable settings + current values
-#   POST /api/settings  - Save one or more settings (JSON body)
-#   GET  /api/debug     - Aggregated debug snapshot (OBD, system, config, logs)
-#   POST /api/update    - Trigger a git pull OTA update
+#   GET  /                  - API root (name, version, status)
+#   GET  /api/data          - JSON snapshot of all current OBD2 data
+#   GET  /api/stream        - SSE event stream for live updates
+#   GET  /api/dtcs          - Active DTC codes
+#   GET  /api/diagnostics   - Diagnostics data + system info
+#   GET  /api/pids          - Supported PIDs list
+#   POST /api/pids/scan     - Trigger PID scan
+#   GET  /api/status        - Connection health check
+#   GET  /api/settings      - All editable settings + current values
+#   POST /api/settings      - Save settings (JSON body)
+#   GET  /api/themes        - Available themes
+#   POST /api/bt-scan       - Scan for Bluetooth OBD adapters
+#   POST /api/bt-pair       - Pair with an OBD adapter
+#   GET  /api/phone/status  - Phone BT tethering status
+#   POST /api/phone/*       - Phone pair/unpair/connect/disconnect
+#   GET  /api/wifi-clients  - Connected WiFi clients
+#   GET  /api/debug         - Aggregated debug snapshot
+#   POST /api/dev/command   - Send raw OBD command
+#   GET  /api/version       - Version + update info
+#   GET  /api/update        - Update status
+#   POST /api/update        - Trigger git pull OTA update
+#   POST /api/update/upload - Upload update bundle
+#   POST /api/restart       - Restart SignalKit service
 #
-# Requires: flask (pip install flask)
+# Requires: flask
 # =============================================================================
 
 import logging

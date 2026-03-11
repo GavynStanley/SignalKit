@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import "../components"
 
 Flickable {
     id: displayPanel
@@ -8,17 +7,13 @@ Flickable {
     clip: true
 
     property color accent: "#3b82f6"
-    property bool locked: false
     property string activeTheme: "blue"
 
     Column {
         id: col
-        anchors.left: parent.left; anchors.leftMargin: 16
-        anchors.right: parent.right; anchors.rightMargin: 16
-        width: parent.width - 32
+        width: parent.width
+        padding: 16
         spacing: 4
-        opacity: displayPanel.locked ? 0.35 : 1.0
-        Behavior on opacity { NumberAnimation { duration: 200 } }
 
         SettingsSectionLabel { text: "THEME COLOR" }
 
@@ -60,35 +55,5 @@ Flickable {
         SettingsRow { label: "Temperature"; valueText: "°C" }
         SettingsRow { label: "Clock"; valueText: "12hr" }
         SettingsRow { label: "Sparklines"; valueText: "On" }
-    }
-
-    // Lock overlay — blocks interaction when vehicle is moving
-    Rectangle {
-        anchors.fill: parent
-        color: "transparent"
-        visible: displayPanel.locked
-        z: 100
-
-        MouseArea {
-            anchors.fill: parent
-            onClicked: {}
-        }
-
-        Column {
-            anchors.centerIn: parent
-            spacing: 6
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: "Vehicle in motion"
-                font.pixelSize: 13; font.weight: Font.Bold
-                color: "#71717a"
-            }
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: "Stop to change settings"
-                font.pixelSize: 10
-                color: "#52525b"
-            }
-        }
     }
 }

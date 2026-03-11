@@ -17,6 +17,11 @@ echo "==> [03-signalkit-services] Installing systemd services"
 # ---------------------------------------------------------------------------
 install -m 644 files/signalkit.service "${ROOTFS_DIR}/etc/systemd/system/signalkit.service"
 
+# Create XDG_RUNTIME_DIR for Qt at boot (tmpfiles.d survives reboots)
+cat > "${ROOTFS_DIR}/etc/tmpfiles.d/signalkit-runtime.conf" << 'EOF'
+d /tmp/runtime-signalkit 0700 root root -
+EOF
+
 on_chroot << 'EOF'
 systemctl enable signalkit.service
 echo "signalkit.service enabled"
