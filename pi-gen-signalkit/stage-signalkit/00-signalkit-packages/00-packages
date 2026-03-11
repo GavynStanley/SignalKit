@@ -1,5 +1,5 @@
 # =============================================================================
-# 00-packages — Additional packages for SignalKit
+# 00-packages — Additional packages for SignalKit (Qt/QML Edition)
 # =============================================================================
 # pi-gen reads this file and runs: apt-get install -y <each line>
 # Base packages (bluez, curl, sudo, ssh, etc.) are already in pi-gen/stage2.
@@ -21,17 +21,17 @@ isc-dhcp-client
 plymouth
 plymouth-themes
 
-# --- Display support ---
-# pywebview uses GTK + WebKit2 for rendering HTML on the HDMI screen.
-# GTK requires a display server — we use a minimal X11 (Xorg) kiosk setup.
-gir1.2-webkit2-4.1
-python3-gi
-python3-gi-cairo
-libgirepository1.0-dev
-xserver-xorg-core
-xserver-xorg-input-evdev
-xinit
-x11-xserver-utils
+# --- Qt6 / QML display (EGLFS — direct framebuffer, no X11 needed) ---
+# PySide6 is installed via pip (includes Qt runtime + QML engine).
+# These system packages provide the EGLFS backend dependencies:
+libgles2-mesa
+libegl1-mesa
+libgbm1
+libinput10
+libts0
+libfontconfig1
+libfreetype6
+libxkbcommon0
 
 # --- Python runtime ---
 python3

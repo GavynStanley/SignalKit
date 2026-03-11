@@ -47,7 +47,8 @@ WPA_COUNTRY="US"
 ENABLE_CLOUD_INIT=0
 
 # --- Architecture ---
-# 32-bit armhf (pi-gen master branch). Pi Zero 2 W runs this perfectly.
+# Pi 5 is 64-bit (aarch64). Build a 64-bit image.
+TARGET_ARCH=arm64
 
 # --- Build stages ---
 # stage0 = bootstrap (base Debian)

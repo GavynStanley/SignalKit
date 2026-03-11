@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=SignalKit
+Description=Minimal dark boot splash for SignalKit OBD2 Dashboard
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/signalkit
+ScriptFile=/usr/share/plymouth/themes/signalkit/signalkit.script

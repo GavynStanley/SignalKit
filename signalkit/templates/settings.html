@@ -1,0 +1,568 @@
+{% extends 'base.html' %}
+{% block title %}SignalKit Settings{% endblock %}
+
+{% block content %}
+  <div class="max-w-[600px] mx-auto p-4">
+
+    <div id="restart-banner" class="hidden bg-amber-500/10 border border-amber-500/25 text-amber-400 p-3 text-sm font-medium mb-3 rounded-xl flex justify-between items-center gap-3">
+      <span>Some changes require a restart to take effect.</span>
+      <button type="button" onclick="restartApp()" id="restart-btn"
+        class="bg-amber-500 text-black font-bold text-xs px-3 py-1.5 rounded-lg shrink-0 hover:opacity-85">Restart Now</button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex gap-0.5 bg-zinc-900 border border-zinc-800 rounded-xl p-1 mb-4" id="settings-tabs">
+      {% for group in groups %}
+      <button type="button" onclick="switchTab('{{ group }}')" data-tab="{{ group }}"
+        class="flex-1 text-[0.65rem] font-semibold px-1.5 py-2 rounded-lg text-center leading-tight transition-all
+          {% if loop.first %}bg-acc text-white shadow-md{% else %}text-zinc-400 hover:text-zinc-200{% endif %}">{{ tab_labels.get(group, group) }}</button>
+      {% endfor %}
+    </div>
+
+    <!-- Tab panels -->
+    {% for group in groups %}
+    <div class="tab-panel {% if not loop.first %}hidden{% endif %}" data-panel="{{ group }}">
+      {% for key, s in settings.items() %}
+        {% if s.group == group %}
+
+          {% if key in list_settings %}
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-2.5" id="field-{{ key }}">
+            <div class="flex justify-between items-center mb-2.5">
+              <label class="text-sm font-medium">{{ s.label }}</label>
+              <button type="button" onclick="saveListSetting('{{ key }}')"
+                class="bg-acc text-white font-bold text-xs px-4 py-2 rounded-lg hover:opacity-90">Save</button>
+            </div>
+            <input type="hidden" id="input-{{ key }}" value="{{ s.value }}"
+              data-key="{{ key }}" data-restart="{{ 'true' if s.restart else 'false' }}">
+            <div id="list-{{ key }}"></div>
+            <div class="flex gap-2 mt-2 items-center">
+              <select id="add-select-{{ key }}"
+                class="flex-1 bg-black/30 border border-zinc-700 text-zinc-100 text-sm px-3 py-2 rounded-lg capitalize focus:outline-none focus:border-acc">
+                {% for cid in all_card_ids %}
+                <option value="{{ cid }}">{{ cid }}</option>
+                {% endfor %}
+              </select>
+              <button type="button" onclick="addCardItem('{{ key }}')"
+                class="bg-acc text-white font-bold text-sm px-3 py-2 rounded-lg hover:opacity-90">+ Add</button>
+            </div>
+            {% if s.description %}<div class="text-xs text-zinc-500 mt-2 leading-relaxed">{{ s.description }}</div>{% endif %}
+            <div class="text-xs font-medium mt-1.5 min-h-[16px]" id="fb-{{ key }}"></div>
+          </div>
+
+          {% elif s.type == 'select' %}
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-2.5" id="field-{{ key }}">
+            <div class="flex justify-between items-center gap-2.5 mb-3">
+              <label class="text-sm font-medium flex-1">{{ s.label }}</label>
+              {% if s.restart %}<span class="text-[0.58rem] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded shrink-0">RESTART</span>{% endif %}
+            </div>
+            <input type="hidden" id="input-{{ key }}" value="{{ s.value }}"
+              data-key="{{ key }}" data-restart="{{ 'true' if s.restart else 'false' }}">
+            <div class="flex bg-zinc-800/60 rounded-lg p-0.5 border border-zinc-700/50" id="seg-{{ key }}">
+              {% for opt_val, opt_label in s.options %}
+              <button type="button"
+                onclick="pickSegment('{{ key }}','{{ opt_val }}')"
+                data-val="{{ opt_val }}"
+                class="flex-1 text-sm font-semibold py-2 rounded-md transition-all
+                  {% if s.value|string|lower == opt_val|string|lower or (s.value == true and opt_val == '1') or (s.value == false and opt_val == '0') %}
+                    bg-acc text-white shadow-md
+                  {% else %}
+                    text-zinc-400 hover:text-zinc-200
+                  {% endif %}">{{ opt_label }}</button>
+              {% endfor %}
+            </div>
+            {% if s.description %}<div class="text-xs text-zinc-500 mt-2 leading-relaxed">{{ s.description }}</div>{% endif %}
+            <div class="text-xs font-medium mt-1.5 min-h-[16px]" id="fb-{{ key }}"></div>
+          </div>
+
+          {% elif s.type == 'bt_mac' %}
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-2.5" id="field-{{ key }}">
+            <input type="hidden" id="input-{{ key }}" value="{{ s.value }}"
+              data-key="{{ key }}" data-restart="{{ 'true' if s.restart else 'false' }}">
+            <div class="flex justify-between items-center gap-2.5 mb-3">
+              <label class="text-sm font-medium flex-1">{{ s.label }}</label>
+              {% if s.restart %}<span class="text-[0.58rem] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded shrink-0">RESTART</span>{% endif %}
+              <button type="button" onclick="btScan()" id="bt-scan-btn"
+                class="bg-acc text-white font-bold text-xs px-4 py-2 rounded-lg hover:opacity-90 shrink-0 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.01 6.001C6.5 1 1 8 5.782 13.001L12.011 20l6.23-7C22.72 8-17.312 1 12.01 6.002z"/></svg>
+                Scan
+              </button>
+            </div>
+            <!-- Current device -->
+            <div class="flex items-center gap-2 bg-black/30 border border-zinc-700 rounded-lg px-3 py-2.5 mb-2" id="bt-current">
+              <svg class="w-4 h-4 text-acc shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>
+              <span class="text-sm font-mono flex-1" id="bt-current-mac">{{ s.value }}</span>
+              <span class="text-xs text-zinc-500" id="bt-current-label">{% if s.value and s.value != 'AA:BB:CC:DD:EE:FF' %}Selected{% else %}Not configured{% endif %}</span>
+            </div>
+            <!-- Scan results -->
+            <div id="bt-devices" class="hidden">
+              <div class="text-[0.65rem] text-zinc-500 uppercase tracking-wider font-semibold mb-1.5">Nearby Devices</div>
+              <div id="bt-device-list" class="space-y-1"></div>
+            </div>
+            <!-- Scanning spinner -->
+            <div id="bt-scanning" class="hidden flex items-center justify-center gap-2 py-4 text-sm text-zinc-400">
+              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+              Scanning for Bluetooth devices…
+            </div>
+            {% if s.description %}<div class="text-xs text-zinc-500 mt-2 leading-relaxed">{{ s.description }}</div>{% endif %}
+            <div class="text-xs font-medium mt-1.5 min-h-[16px]" id="fb-{{ key }}"></div>
+          </div>
+
+          {% elif s.type == 'bt_phone' %}
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-2.5" id="field-{{ key }}">
+            <input type="hidden" id="input-{{ key }}" value="{{ s.value }}"
+              data-key="{{ key }}" data-restart="false">
+            <div class="flex justify-between items-center gap-2.5 mb-3">
+              <label class="text-sm font-medium flex-1">{{ s.label }}</label>
+            </div>
+            <!-- Phone PAN status -->
+            <div id="phone-status" class="bg-black/30 border border-zinc-700 rounded-lg px-3 py-2.5 mb-2">
+              <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-acc shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg>
+                <span class="text-sm flex-1" id="phone-label">{% if s.value %}Paired: <span class="font-mono text-xs">{{ s.value }}</span>{% else %}No phone paired{% endif %}</span>
+                <span id="phone-pan-dot" class="w-2 h-2 rounded-full bg-zinc-600"></span>
+              </div>
+              <div id="phone-pan-info" class="text-xs text-zinc-500 mt-1 hidden"></div>
+            </div>
+            <!-- Action buttons -->
+            <div class="flex gap-2 mt-2">
+              {% if s.value %}
+              <button type="button" onclick="phoneConnect()" id="phone-connect-btn"
+                class="flex-1 bg-acc text-white font-bold text-xs px-3 py-2.5 rounded-lg hover:opacity-90">Connect PAN</button>
+              <button type="button" onclick="phoneDisconnect()" id="phone-disconnect-btn"
+                class="bg-zinc-700 text-zinc-300 font-bold text-xs px-3 py-2.5 rounded-lg hover:opacity-90 hidden">Disconnect</button>
+              <button type="button" onclick="phoneUnpair()"
+                class="bg-zinc-800 text-red-400 font-bold text-xs px-3 py-2.5 rounded-lg hover:opacity-90">Unpair</button>
+              {% else %}
+              <button type="button" onclick="phoneScan()" id="phone-scan-btn"
+                class="flex-1 bg-acc text-white font-bold text-xs px-3 py-2.5 rounded-lg hover:opacity-90 flex items-center justify-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                Scan &amp; Pair Phone
+              </button>
+              {% endif %}
+            </div>
+            <!-- Scan results for pairing -->
+            <div id="phone-devices" class="hidden mt-2">
+              <div class="text-[0.65rem] text-zinc-500 uppercase tracking-wider font-semibold mb-1.5">Nearby Devices</div>
+              <div id="phone-device-list" class="space-y-1"></div>
+            </div>
+            <div id="phone-scanning" class="hidden flex items-center justify-center gap-2 py-4 text-sm text-zinc-400">
+              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+              Scanning for devices…
+            </div>
+            {% if s.description %}<div class="text-xs text-zinc-500 mt-2 leading-relaxed">{{ s.description }}</div>{% endif %}
+            <div class="text-xs font-medium mt-1.5 min-h-[16px]" id="fb-{{ key }}"></div>
+          </div>
+
+          {% else %}
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-2.5" id="field-{{ key }}">
+            <div class="flex justify-between items-center gap-2.5">
+              <label class="text-sm font-medium flex-1">{{ s.label }}</label>
+              {% if s.restart %}<span class="text-[0.58rem] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded shrink-0">RESTART</span>{% endif %}
+              {% if s.type == 'str' %}
+                <input type="text" id="input-{{ key }}" value="{{ s.value }}"
+                  data-key="{{ key }}" data-restart="{{ 'true' if s.restart else 'false' }}"
+                  class="w-40 bg-black/30 border border-zinc-700 text-zinc-100 font-mono text-sm p-2 rounded-lg text-right focus:outline-none focus:border-acc focus:ring-2 focus:ring-acc/20">
+              {% else %}
+                <input type="number" id="input-{{ key }}" value="{{ s.value }}"
+                  min="{{ s.min }}" max="{{ s.max }}" step="{{ '0.1' if s.type == 'float' else '1' }}"
+                  data-key="{{ key }}" data-restart="{{ 'true' if s.restart else 'false' }}"
+                  class="w-40 bg-black/30 border border-zinc-700 text-zinc-100 font-mono text-sm p-2 rounded-lg text-right focus:outline-none focus:border-acc focus:ring-2 focus:ring-acc/20">
+              {% endif %}
+              <button type="button" onclick="saveSetting('{{ key }}')"
+                class="bg-acc text-white font-bold text-xs px-4 py-2 rounded-lg hover:opacity-90 shrink-0">Save</button>
+            </div>
+            {% if s.description %}<div class="text-xs text-zinc-500 mt-2 leading-relaxed">{{ s.description }}</div>{% endif %}
+            <div class="text-xs font-medium mt-1.5 min-h-[16px]" id="fb-{{ key }}"></div>
+          </div>
+          {% endif %}
+
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+{% endblock %}
+
+{% block footer %}
+  <div class="text-center py-4 text-xs text-zinc-600 border-t border-zinc-800">
+    SignalKit v{{ version }} &middot; <a href="/" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    let restartNeeded = false;
+
+    function switchTab(group) {
+      // Hide all panels, show selected
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+      const panel = document.querySelector('[data-panel="' + group + '"]');
+      if (panel) panel.classList.remove('hidden');
+      // Update tab button styles
+      document.querySelectorAll('#settings-tabs button').forEach(b => {
+        if (b.dataset.tab === group) {
+          b.className = 'flex-1 text-[0.65rem] font-semibold px-1.5 py-2 rounded-lg text-center leading-tight transition-all bg-acc text-white shadow-md';
+        } else {
+          b.className = 'flex-1 text-[0.65rem] font-semibold px-1.5 py-2 rounded-lg text-center leading-tight transition-all text-zinc-400 hover:text-zinc-200';
+        }
+      });
+    }
+
+    async function saveSetting(key) {
+      const input = document.getElementById('input-' + key);
+      const fb = document.getElementById('fb-' + key);
+      const requiresRestart = input.dataset.restart === 'true';
+
+      fb.textContent = 'Saving...';
+      fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-amber-400';
+
+      try {
+        const resp = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: input.value }),
+        });
+        const result = await resp.json();
+
+        if (result.errors && result.errors[key]) {
+          fb.textContent = result.errors[key];
+          fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-red-400';
+        } else if (result.saved && result.saved.includes(key)) {
+          fb.textContent = result.messages[key] || 'Saved';
+          fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-emerald-400';
+          if (key === 'COLOR_THEME') setTimeout(() => window.location.reload(), 500);
+          if (requiresRestart) showRestartBanner();
+        } else {
+          fb.textContent = 'Unknown response';
+          fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-red-400';
+        }
+      } catch (e) {
+        fb.textContent = 'Network error';
+        fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-red-400';
+      }
+    }
+
+    function pickSegment(key, val) {
+      document.getElementById('input-' + key).value = val;
+      const btns = document.querySelectorAll('#seg-' + key + ' button');
+      btns.forEach(b => {
+        if (b.dataset.val === val) {
+          b.className = 'flex-1 text-sm font-semibold py-2 rounded-md transition-all bg-acc text-white shadow-md';
+        } else {
+          b.className = 'flex-1 text-sm font-semibold py-2 rounded-md transition-all text-zinc-400 hover:text-zinc-200';
+        }
+      });
+      saveSetting(key);
+    }
+
+    function showRestartBanner() {
+      restartNeeded = true;
+      document.getElementById('restart-banner').classList.remove('hidden');
+    }
+
+    async function restartApp() {
+      const btn = document.getElementById('restart-btn');
+      btn.disabled = true;
+      btn.textContent = 'Restarting...';
+      try {
+        await fetch('/api/restart', { method: 'POST' });
+        btn.textContent = 'Reconnecting...';
+        setTimeout(() => { window.location.href = '/'; }, 5000);
+      } catch (e) {
+        btn.textContent = 'Restart Now';
+        btn.disabled = false;
+      }
+    }
+
+    // --- Ordered list editor ---
+    const LIST_KEYS = {{ list_settings_json|safe }};
+
+    function getListItems(key) {
+      const val = document.getElementById('input-' + key).value;
+      return val ? val.split(',').map(s => s.trim()).filter(Boolean) : [];
+    }
+
+    function setListItems(key, items) {
+      document.getElementById('input-' + key).value = items.join(', ');
+      renderList(key);
+    }
+
+    function renderList(key) {
+      const wrap = document.getElementById('list-' + key);
+      const items = getListItems(key);
+      wrap.innerHTML = items.map((id, i) => `
+        <div class="flex items-center gap-2 bg-black/30 border border-zinc-700 rounded-lg px-3 py-2 mb-1.5 text-sm">
+          <span class="w-[22px] h-[22px] min-w-[22px] flex items-center justify-center rounded-md bg-acc/15 text-acc text-xs font-bold">${i + 1}</span>
+          <span class="flex-1 capitalize">${id}</span>
+          <span class="cursor-pointer text-zinc-500 hover:text-zinc-200 select-none px-1" title="Move up" onclick="moveCard('${key}',${i},-1)" ${i===0?'style="opacity:0.3;pointer-events:none"':''}>&#9650;</span>
+          <span class="cursor-pointer text-zinc-500 hover:text-zinc-200 select-none px-1" title="Move down" onclick="moveCard('${key}',${i},1)" ${i===items.length-1?'style="opacity:0.3;pointer-events:none"':''}>&#9660;</span>
+          <span class="cursor-pointer text-zinc-500 hover:text-red-400 select-none px-1" title="Remove" onclick="removeCard('${key}',${i})">&#10005;</span>
+        </div>
+      `).join('');
+    }
+
+    function moveCard(key, idx, dir) {
+      const items = getListItems(key);
+      const target = idx + dir;
+      if (target < 0 || target >= items.length) return;
+      [items[idx], items[target]] = [items[target], items[idx]];
+      setListItems(key, items);
+    }
+
+    function removeCard(key, idx) {
+      const items = getListItems(key);
+      items.splice(idx, 1);
+      setListItems(key, items);
+    }
+
+    function addCardItem(key) {
+      const sel = document.getElementById('add-select-' + key);
+      const items = getListItems(key);
+      if (!items.includes(sel.value)) {
+        items.push(sel.value);
+        setListItems(key, items);
+      }
+    }
+
+    function saveListSetting(key) { saveSetting(key); }
+
+    LIST_KEYS.forEach(renderList);
+
+    // --- Bluetooth device scanner ---
+    async function btScan() {
+      const btn = document.getElementById('bt-scan-btn');
+      const spinner = document.getElementById('bt-scanning');
+      const devicesWrap = document.getElementById('bt-devices');
+      const list = document.getElementById('bt-device-list');
+
+      btn.disabled = true;
+      btn.classList.add('opacity-50');
+      spinner.classList.remove('hidden');
+      devicesWrap.classList.add('hidden');
+      list.innerHTML = '';
+
+      try {
+        const resp = await fetch('/api/bt-scan', { method: 'POST' });
+        const data = await resp.json();
+
+        spinner.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+
+        if (!data.ok) {
+          list.innerHTML = `<div class="text-xs text-red-400 py-2">${data.error || 'Scan failed'}</div>`;
+          devicesWrap.classList.remove('hidden');
+          return;
+        }
+
+        if (data.devices.length === 0) {
+          list.innerHTML = '<div class="text-xs text-zinc-500 py-2">No devices found. Make sure your OBD2 adapter is powered on.</div>';
+          devicesWrap.classList.remove('hidden');
+          return;
+        }
+
+        const currentMac = document.getElementById('input-OBD_MAC').value;
+        list.innerHTML = data.devices.map(d => {
+          const isSelected = d.mac.toUpperCase() === currentMac.toUpperCase();
+          return `<button type="button" onclick="btSelect('${d.mac}','${d.name.replace(/'/g, "\\'")}')"
+            class="w-full flex items-center gap-2.5 ${d.obd ? 'bg-acc/5' : 'bg-black/30'} border rounded-lg px-3 py-2.5 text-left transition-all
+              ${isSelected ? 'border-acc bg-acc/10' : d.obd ? 'border-acc/30 hover:border-acc/50' : 'border-zinc-700 hover:border-zinc-500'}">
+            <svg class="w-4 h-4 ${isSelected || d.obd ? 'text-acc' : 'text-zinc-600'} shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium truncate">${d.name}${d.obd ? ' <span class="inline-block text-[0.6rem] font-bold bg-acc/20 text-acc px-1.5 py-0.5 rounded ml-1.5 align-middle">OBD</span>' : ''}</div>
+              <div class="text-xs font-mono text-zinc-500">${d.mac}</div>
+            </div>
+            ${isSelected ? '<span class="text-[0.6rem] font-bold text-acc bg-acc/15 px-2 py-0.5 rounded">SELECTED</span>' : ''}
+          </button>`;
+        }).join('');
+        devicesWrap.classList.remove('hidden');
+      } catch (e) {
+        spinner.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+        list.innerHTML = '<div class="text-xs text-red-400 py-2">Network error during scan.</div>';
+        devicesWrap.classList.remove('hidden');
+      }
+    }
+
+    async function btSelect(mac, name) {
+      document.getElementById('input-OBD_MAC').value = mac;
+      document.getElementById('bt-current-mac').textContent = mac;
+      document.getElementById('bt-current-label').textContent = name;
+      // Re-render device list to update selected state
+      document.querySelectorAll('#bt-device-list button').forEach(b => {
+        const bMac = b.querySelector('.font-mono')?.textContent;
+        if (bMac === mac) {
+          b.className = b.className.replace('border-zinc-700 hover:border-zinc-500', 'border-acc bg-acc/10');
+        } else {
+          b.className = b.className.replace('border-acc bg-acc/10', 'border-zinc-700 hover:border-zinc-500');
+        }
+      });
+      // Pair immediately while device is still discoverable
+      try {
+        const pairResp = await fetch('/api/bt-pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac }),
+        });
+        const pairData = await pairResp.json();
+        if (!pairData.ok) {
+          console.warn('Pairing warning:', pairData.error);
+        }
+      } catch(e) {
+        console.warn('Pairing error:', e);
+      }
+      await saveSetting('OBD_MAC');
+    }
+
+    // --- Phone Bluetooth PAN ---
+    async function phoneScan() {
+      const btn = document.getElementById('phone-scan-btn');
+      const spinner = document.getElementById('phone-scanning');
+      const devicesWrap = document.getElementById('phone-devices');
+      const list = document.getElementById('phone-device-list');
+
+      btn.disabled = true;
+      btn.classList.add('opacity-50');
+      spinner.classList.remove('hidden');
+      devicesWrap.classList.add('hidden');
+      list.innerHTML = '';
+
+      try {
+        const resp = await fetch('/api/bt-scan', { method: 'POST' });
+        const data = await resp.json();
+        spinner.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+
+        if (!data.ok || !data.devices.length) {
+          list.innerHTML = '<div class="text-xs text-zinc-500 py-2">No devices found. Make sure Bluetooth is on.</div>';
+          devicesWrap.classList.remove('hidden');
+          return;
+        }
+
+        list.innerHTML = data.devices.map(d =>
+          `<button type="button" onclick="phonePair('${d.mac}')"
+            class="w-full flex items-center gap-2.5 bg-black/30 border border-zinc-700 hover:border-acc rounded-lg px-3 py-2.5 text-left transition-all">
+            <svg class="w-4 h-4 text-zinc-500 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium truncate">${d.name}</div>
+              <div class="text-xs font-mono text-zinc-500">${d.mac}</div>
+            </div>
+            <span class="text-[0.6rem] font-bold text-acc">PAIR</span>
+          </button>`
+        ).join('');
+        devicesWrap.classList.remove('hidden');
+      } catch (e) {
+        spinner.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+      }
+    }
+
+    async function phonePair(mac) {
+      const fb = document.getElementById('fb-PHONE_BT_MAC');
+      fb.textContent = 'Pairing...';
+      fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-amber-400';
+
+      try {
+        const resp = await fetch('/api/phone/pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          fb.textContent = 'Paired! Enable Bluetooth tethering on your phone.';
+          fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-emerald-400';
+          // Reload page to show paired state
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          fb.textContent = data.message || 'Pairing failed';
+          fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-red-400';
+        }
+      } catch (e) {
+        fb.textContent = 'Network error during pairing';
+        fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-red-400';
+      }
+    }
+
+    async function phoneUnpair() {
+      const fb = document.getElementById('fb-PHONE_BT_MAC');
+      try {
+        const resp = await fetch('/api/phone/unpair', { method: 'POST' });
+        const data = await resp.json();
+        fb.textContent = data.ok ? 'Phone unpaired' : (data.message || 'Failed');
+        fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] ' + (data.ok ? 'text-emerald-400' : 'text-red-400');
+        if (data.ok) setTimeout(() => location.reload(), 1000);
+      } catch (e) {
+        fb.textContent = 'Network error';
+        fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-red-400';
+      }
+    }
+
+    async function phoneConnect() {
+      const btn = document.getElementById('phone-connect-btn');
+      const fb = document.getElementById('fb-PHONE_BT_MAC');
+      btn.disabled = true;
+      btn.textContent = 'Connecting...';
+      fb.textContent = '';
+
+      try {
+        const resp = await fetch('/api/phone/connect', { method: 'POST' });
+        const data = await resp.json();
+        btn.disabled = false;
+        if (data.ok) {
+          btn.textContent = 'Connected';
+          fb.textContent = data.message;
+          fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-emerald-400';
+          pollPhoneStatus();
+        } else {
+          btn.textContent = 'Connect PAN';
+          fb.textContent = data.message || 'Connection failed';
+          fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-red-400';
+        }
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Connect PAN';
+        fb.textContent = 'Network error';
+        fb.className = 'text-xs font-medium mt-1.5 min-h-[16px] text-red-400';
+      }
+    }
+
+    async function phoneDisconnect() {
+      await fetch('/api/phone/disconnect', { method: 'POST' });
+      pollPhoneStatus();
+    }
+
+    async function pollPhoneStatus() {
+      try {
+        const resp = await fetch('/api/phone/status');
+        const s = await resp.json();
+        const dot = document.getElementById('phone-pan-dot');
+        const info = document.getElementById('phone-pan-info');
+        const connBtn = document.getElementById('phone-connect-btn');
+        const discBtn = document.getElementById('phone-disconnect-btn');
+
+        if (s.connected) {
+          dot.className = 'w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_#22c55e]';
+          info.textContent = `IP: ${s.ip || 'obtaining...'} · Internet: ${s.has_internet ? 'Yes' : 'No'}`;
+          info.classList.remove('hidden');
+          if (connBtn) { connBtn.classList.add('hidden'); }
+          if (discBtn) { discBtn.classList.remove('hidden'); }
+        } else {
+          dot.className = 'w-2 h-2 rounded-full bg-zinc-600';
+          info.classList.add('hidden');
+          if (connBtn) { connBtn.classList.remove('hidden'); connBtn.textContent = 'Connect PAN'; }
+          if (discBtn) { discBtn.classList.add('hidden'); }
+        }
+      } catch (e) {}
+    }
+
+    // Poll phone status on load if paired
+    if (document.getElementById('phone-connect-btn')) {
+      pollPhoneStatus();
+      setInterval(pollPhoneStatus, 10000);
+    }
+  </script>
+{% endblock %}

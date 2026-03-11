@@ -1,0 +1,34 @@
+[Unit]
+Description=SignalKit AirPlay Receiver (UxPlay)
+Documentation=https://github.com/FDH2/UxPlay
+After=network-online.target avahi-daemon.service signalkit-x11.service
+Wants=network-online.target avahi-daemon.service
+Requires=signalkit-x11.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+# UxPlay needs the X11 display for video output
+Environment=DISPLAY=:0
+
+# AirPlay receiver configuration:
+#   -n  "SignalKit"    — name shown on iPhone's AirPlay device list
+#   -nh                — no hold (exit when client disconnects, systemd restarts)
+#   -p                 — use default ports
+#   -fps 30            — target 30fps for mirroring
+#   -vsync no          — disable vsync for lower latency
+#   -async             — allow audio/video async for smoother playback
+ExecStart=/usr/local/bin/uxplay -n "SignalKit" -nh -fps 30
+
+# Restart automatically when the AirPlay client disconnects
+Restart=always
+RestartSec=2
+
+# Resource limits
+Nice=-5
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

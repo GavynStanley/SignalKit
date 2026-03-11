@@ -1,0 +1,21 @@
+<RCC>
+    <qresource prefix="/">
+        <file>Main.qml</file>
+        <file>DockButton.qml</file>
+        <file>HomeView.qml</file>
+        <file>AppTile.qml</file>
+        <file>DashboardView.qml</file>
+        <file>DashCard.qml</file>
+        <file>SettingsView.qml</file>
+        <file>SettingsTab.qml</file>
+        <file>SettingsRow.qml</file>
+        <file>SettingsSectionLabel.qml</file>
+        <file>SettingsDisplayPanel.qml</file>
+        <file>DevConsoleView.qml</file>
+        <file>icons/home.svg</file>
+        <file>icons/bolt.svg</file>
+        <file>icons/settings.svg</file>
+        <file>icons/terminal.svg</file>
+        <file>icons/airplay.svg</file>
+    </qresource>
+</RCC>

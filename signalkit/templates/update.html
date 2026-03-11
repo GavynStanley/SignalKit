@@ -1,0 +1,117 @@
+{% extends 'base.html' %}
+{% block title %}SignalKit Update{% endblock %}
+
+{% block content %}
+  <div class="max-w-[600px] mx-auto p-4">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-3.5">
+      <h2 class="text-base font-bold mb-1">Software Update</h2>
+      <p class="text-sm text-zinc-500 mb-4 leading-relaxed">Pull the latest code from the git repository and restart SignalKit.</p>
+
+      <div class="flex justify-between items-center py-2.5 border-t border-zinc-800 first:border-t-0">
+        <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Current Version</span>
+        <span class="text-sm font-mono" id="current-hash">loading...</span>
+      </div>
+      <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+        <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Branch</span>
+        <span class="text-sm font-mono" id="current-branch">loading...</span>
+      </div>
+      <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+        <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Last Updated</span>
+        <span class="text-sm font-mono" id="last-commit-date">loading...</span>
+      </div>
+
+      <button type="button" onclick="runUpdate()" id="update-btn"
+        class="w-full bg-acc text-white font-bold text-sm py-3.5 rounded-xl mt-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-35 disabled:cursor-not-allowed">
+        Check for Updates &amp; Install
+      </button>
+
+      <div id="update-log" class="hidden mt-3.5 bg-black/40 border border-zinc-800 rounded-xl p-3.5 font-mono text-xs text-zinc-400 leading-relaxed max-h-[300px] overflow-y-auto whitespace-pre-wrap break-all"></div>
+      <div id="result-banner" class="hidden mt-3.5 p-3 rounded-xl text-sm font-semibold"></div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    async function loadGitInfo() {
+      try {
+        const r = await fetch('/api/update');
+        const d = await r.json();
+        document.getElementById('current-hash').textContent = d.hash || 'unknown';
+        document.getElementById('current-branch').textContent = d.branch || 'unknown';
+        document.getElementById('last-commit-date').textContent = d.date || 'unknown';
+      } catch(e) {
+        document.getElementById('current-hash').textContent = 'error';
+      }
+    }
+    loadGitInfo();
+
+    async function runUpdate() {
+      const btn = document.getElementById('update-btn');
+      const log = document.getElementById('update-log');
+      const banner = document.getElementById('result-banner');
+
+      btn.disabled = true;
+      btn.textContent = 'Updating...';
+      log.classList.remove('hidden');
+      log.innerHTML = '';
+      banner.classList.add('hidden');
+
+      function addLog(text, color) {
+        const span = document.createElement('span');
+        span.className = color || 'text-zinc-400';
+        span.textContent = text + '\n';
+        log.appendChild(span);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      addLog('Fetching latest changes...', 'text-acc');
+
+      try {
+        const resp = await fetch('/api/update', { method: 'POST' });
+        const result = await resp.json();
+
+        if (result.steps) {
+          result.steps.forEach(s => {
+            addLog('$ ' + s.cmd, 'text-acc');
+            if (s.output) addLog(s.output);
+            if (s.error) addLog(s.error, 'text-red-400');
+          });
+        }
+
+        banner.classList.remove('hidden');
+        if (result.status === 'updated') {
+          banner.className = 'mt-3.5 p-3 rounded-xl text-sm font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400';
+          banner.textContent = 'Update installed! Restarting SignalKit...';
+          addLog('Restarting SignalKit service...', 'text-emerald-400');
+          setTimeout(() => { window.location.reload(); }, 6000);
+        } else if (result.status === 'reboot_required') {
+          banner.className = 'mt-3.5 p-3 rounded-xl text-sm font-semibold bg-amber-500/10 border border-amber-500/20 text-amber-400';
+          banner.textContent = 'Update staged — Pi is rebooting to apply it. This takes about 30 seconds.';
+          addLog('Disabling read-only filesystem...', 'text-amber-400');
+          addLog('Rebooting to apply update...', 'text-amber-400');
+        } else if (result.status === 'up_to_date') {
+          banner.className = 'mt-3.5 p-3 rounded-xl text-sm font-semibold bg-zinc-800 border border-zinc-700 text-zinc-400';
+          banner.textContent = 'Already up to date.';
+          addLog('No new changes.', 'text-emerald-400');
+          btn.disabled = false;
+          btn.textContent = 'Check for Updates & Install';
+        } else {
+          banner.className = 'mt-3.5 p-3 rounded-xl text-sm font-semibold bg-red-500/10 border border-red-500/20 text-red-400';
+          banner.textContent = result.error || 'Update failed.';
+          addLog('Update failed: ' + (result.error || 'Unknown error'), 'text-red-400');
+          btn.disabled = false;
+          btn.textContent = 'Retry Update';
+        }
+        loadGitInfo();
+      } catch(e) {
+        addLog('Network error: ' + e.message, 'text-red-400');
+        banner.classList.remove('hidden');
+        banner.className = 'mt-3.5 p-3 rounded-xl text-sm font-semibold bg-red-500/10 border border-red-500/20 text-red-400';
+        banner.textContent = 'Network error during update.';
+        btn.disabled = false;
+        btn.textContent = 'Retry Update';
+      }
+    }
+  </script>
+{% endblock %}

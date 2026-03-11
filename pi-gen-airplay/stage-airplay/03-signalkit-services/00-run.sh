@@ -1,18 +1,22 @@
 #!/bin/bash -e
 # =============================================================================
-# 03-signalkit-services/00-run.sh
+# 03-signalkit-services/00-run.sh — SignalKit AirPlay OS (Pi 5)
 # =============================================================================
-# Installs and enables the signalkit.service systemd unit.
-# This is what makes SignalKit auto-start on every boot with no user interaction.
+# Installs and enables systemd services:
+#   - signalkit.service       — OBD dashboard (main app)
+#   - signalkit-x11.service   — Minimal X11 server for pywebview + UxPlay
+#   - signalkit-rfcomm.service — Bluetooth rfcomm bind at boot
+#   - signalkit-wifi.service  — WiFi hotspot config regeneration
+#   - signalkit-airplay.service — UxPlay AirPlay receiver
 # =============================================================================
 
-echo "==> [03-signalkit-services] Installing systemd service"
+echo "==> [03-signalkit-services] Installing systemd services"
 
-# Install the service unit file
+# ---------------------------------------------------------------------------
+# SignalKit dashboard service
+# ---------------------------------------------------------------------------
 install -m 644 files/signalkit.service "${ROOTFS_DIR}/etc/systemd/system/signalkit.service"
 
-# Enable it so it starts on boot (equivalent to 'systemctl enable signalkit')
-# In pi-gen chroot, systemctl enable works via symlinks in /etc/systemd/system/
 on_chroot << 'EOF'
 systemctl enable signalkit.service
 echo "signalkit.service enabled"
@@ -21,9 +25,7 @@ EOF
 # ---------------------------------------------------------------------------
 # X11 display server service
 # ---------------------------------------------------------------------------
-# pywebview uses GTK + WebKit which requires X11. This minimal Xorg service
-# starts a framebuffer-only X server with no window manager — SignalKit renders
-# fullscreen via pywebview on top of it.
+# Both pywebview (dashboard) and UxPlay (AirPlay) need X11 for rendering.
 install -m 644 files/signalkit-x11.service \
     "${ROOTFS_DIR}/etc/systemd/system/signalkit-x11.service"
 
@@ -42,8 +44,6 @@ EOF
 # ---------------------------------------------------------------------------
 # Bluetooth rfcomm bind helper service
 # ---------------------------------------------------------------------------
-# rfcomm bind must be run each boot before the signalkit app starts.
-# We create a oneshot service that does this, ordered before signalkit.service.
 install -m 644 files/signalkit-rfcomm.service \
     "${ROOTFS_DIR}/etc/systemd/system/signalkit-rfcomm.service"
 
@@ -55,12 +55,9 @@ EOF
 # ---------------------------------------------------------------------------
 # WiFi hotspot configuration service
 # ---------------------------------------------------------------------------
-# Regenerates hostapd.conf from config.py on each boot so WiFi SSID/password
-# changes made via the web UI take effect.
 install -m 644 files/signalkit-wifi.service \
     "${ROOTFS_DIR}/etc/systemd/system/signalkit-wifi.service"
 
-# Helper script that generates hostapd.conf from config.py
 install -d "${ROOTFS_DIR}/opt/signalkit/scripts"
 install -m 755 files/signalkit-gen-hostapd.sh \
     "${ROOTFS_DIR}/opt/signalkit/scripts/signalkit-gen-hostapd.sh"
@@ -68,6 +65,20 @@ install -m 755 files/signalkit-gen-hostapd.sh \
 on_chroot << 'EOF'
 systemctl enable signalkit-wifi.service
 echo "signalkit-wifi.service enabled"
+EOF
+
+# ---------------------------------------------------------------------------
+# AirPlay receiver service (UxPlay)
+# ---------------------------------------------------------------------------
+# UxPlay runs alongside SignalKit, rendering AirPlay mirrored content
+# to the X11 display. When an iPhone connects via AirPlay, UxPlay takes
+# over the screen. When they disconnect, UxPlay restarts and waits.
+install -m 644 files/signalkit-airplay.service \
+    "${ROOTFS_DIR}/etc/systemd/system/signalkit-airplay.service"
+
+on_chroot << 'EOF'
+systemctl enable signalkit-airplay.service
+echo "signalkit-airplay.service enabled"
 EOF
 
 echo "==> [03-signalkit-services] Services installed"

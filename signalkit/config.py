@@ -15,6 +15,8 @@
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
 
 _logger = logging.getLogger(__name__)
@@ -492,29 +494,40 @@ def get_current_settings() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Screen brightness via xrandr
+# First-run setup check
 # ---------------------------------------------------------------------------
 
-import subprocess as _subprocess
-import shutil as _shutil
+def needs_setup() -> bool:
+    """Check if the first-run setup wizard should be shown.
+
+    Returns True when SETUP_COMPLETE is 0 AND the OBD MAC is still the
+    factory placeholder — i.e., the user has never configured the device.
+    """
+    return (SETUP_COMPLETE == 0
+            and OBD_MAC == "AA:BB:CC:DD:EE:FF")
+
+
+# ---------------------------------------------------------------------------
+# Screen brightness via xrandr
+# ---------------------------------------------------------------------------
 
 def apply_brightness(level=None):
     """Set screen brightness via xrandr. No-op if xrandr is not available."""
     if level is None:
         level = SCREEN_BRIGHTNESS
     level = max(0.3, min(2.0, float(level)))
-    if not _shutil.which("xrandr"):
+    if not shutil.which("xrandr"):
         return
     try:
         # Find the connected output name
-        out = _subprocess.check_output(["xrandr", "--current"],
-                                       stderr=_subprocess.DEVNULL).decode()
+        out = subprocess.check_output(["xrandr", "--current"],
+                                      stderr=subprocess.DEVNULL).decode()
         for line in out.splitlines():
             if " connected" in line:
                 output_name = line.split()[0]
-                _subprocess.run(["xrandr", "--output", output_name,
-                                 "--brightness", str(level)],
-                                stderr=_subprocess.DEVNULL)
+                subprocess.run(["xrandr", "--output", output_name,
+                                "--brightness", str(level)],
+                               stderr=subprocess.DEVNULL)
                 _logger.info(f"Screen brightness set to {level} on {output_name}")
                 return
     except Exception as e:

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en" class="dark" style="background:#0a0a0a">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>{% block title %}SignalKit{% endblock %}</title>
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-180.svg">
+  <script src="/static/tailwind.js"></script>
+  <script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          sk: { bg: '#0a0a0a', good: '#22c55e', warn: '#f59e0b', danger: '#ef4444' },
+          acc: '{{ accent_hex }}'
+        }
+      }
+    }
+  };
+  </script>
+  <style type="text/tailwindcss">
+    @layer base {
+      :root { --accent: {{ accent_hex }}; }
+      body {
+        background: #0a0a0a; color: #ffffff; min-height: 100vh;
+        font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+    }
+    @layer components {
+      .clr-good { color: #22c55e !important; }
+      .clr-warn { color: #f59e0b !important; }
+      .clr-danger { color: #ef4444 !important; }
+    }
+  </style>
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  {% block nav %}
+  {% include 'partials/nav.html' %}
+  {% endblock %}
+
+  {% block content %}{% endblock %}
+
+  {% block footer %}
+  <div class="text-center py-4 text-xs text-zinc-600 border-t border-zinc-800">
+    SignalKit v{{ version }} &middot; <a href="/dashboard" class="text-zinc-400 hover:text-acc">Dashboard</a> &middot; {{ ip }}:{{ port }}
+  </div>
+  {% endblock %}
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

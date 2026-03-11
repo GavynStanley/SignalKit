@@ -1,0 +1,307 @@
+{% extends 'base.html' %}
+{% block title %}SignalKit Setup{% endblock %}
+
+{% block head_extra %}
+  <style>
+    .step { display: none; }
+    .step.active { display: block; }
+    .fade-in { animation: fadeIn 0.4s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .pulse-dot { animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+  </style>
+{% endblock %}
+
+{% block nav %}{% endblock %}
+
+{% block content %}
+  <div class="max-w-md mx-auto px-5 py-8">
+
+    <!-- Step 1: Welcome -->
+    <div class="step active fade-in" data-step="1">
+      <div class="text-center mb-8">
+        <div class="mx-auto mb-5 flex justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="12 14 220 42" width="240" height="48">
+            <rect x="16" y="44" width="6" height="8" rx="2" fill="#DC2626" opacity="0.32"/>
+            <rect x="25" y="38" width="6" height="14" rx="2" fill="#DC2626" opacity="0.55"/>
+            <rect x="34" y="30" width="6" height="22" rx="2" fill="#DC2626" opacity="0.78"/>
+            <rect x="43" y="20" width="6" height="32" rx="2" fill="#DC2626"/>
+            <text x="60" y="44" font-family="'Arial Black','Helvetica Neue',sans-serif" font-weight="800" font-size="32" letter-spacing="-0.5" fill="#ffffff">Signal</text>
+            <text x="178" y="44" font-family="'Arial Black','Helvetica Neue',sans-serif" font-weight="800" font-size="32" letter-spacing="-0.5" fill="#DC2626">Kit</text>
+          </svg>
+        </div>
+        <h1 class="text-2xl font-bold mb-2">Welcome to SignalKit</h1>
+        <p class="text-sm text-zinc-400 leading-relaxed">Let's set up your OBD2 dashboard. This takes about a minute.</p>
+      </div>
+
+      <!-- Connected device greeting -->
+      <div id="connected-device" class="hidden bg-zinc-900 border border-zinc-800 rounded-xl p-3.5 mb-5 flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-emerald-500/15 flex items-center justify-center shrink-0">
+          <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.858 15.355-5.858 21.213 0"/></svg>
+        </div>
+        <div>
+          <div class="text-sm font-medium" id="device-name">Connected</div>
+          <div class="text-xs text-zinc-500">Connected to SignalKit WiFi</div>
+        </div>
+      </div>
+      <div class="space-y-3 mb-8">
+        <div class="flex items-center gap-3 bg-zinc-900 border border-zinc-800 rounded-xl p-3.5">
+          <div class="w-8 h-8 rounded-lg bg-acc/15 flex items-center justify-center shrink-0"><span class="text-sm font-bold text-acc">1</span></div>
+          <div><div class="text-sm font-medium">Connect your OBD2 adapter</div><div class="text-xs text-zinc-500">Scan for nearby Bluetooth devices</div></div>
+        </div>
+        <div class="flex items-center gap-3 bg-zinc-900 border border-zinc-800 rounded-xl p-3.5">
+          <div class="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0"><span class="text-sm font-bold text-zinc-500">2</span></div>
+          <div><div class="text-sm font-medium">Set WiFi password</div><div class="text-xs text-zinc-500">Secure your SignalKit network</div></div>
+        </div>
+        <div class="flex items-center gap-3 bg-zinc-900 border border-zinc-800 rounded-xl p-3.5">
+          <div class="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0"><span class="text-sm font-bold text-zinc-500">3</span></div>
+          <div><div class="text-sm font-medium">You're ready</div><div class="text-xs text-zinc-500">Start driving with live data</div></div>
+        </div>
+      </div>
+      <button onclick="goStep(2)" class="w-full bg-acc text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity">Get Started</button>
+    </div>
+
+    <!-- Step 2: Bluetooth Scan -->
+    <div class="step fade-in" data-step="2">
+      <div class="mb-6">
+        <div class="text-xs font-semibold text-acc uppercase tracking-wider mb-1">Step 1 of 2</div>
+        <h2 class="text-xl font-bold mb-1">Find Your OBD2 Adapter</h2>
+        <p class="text-sm text-zinc-400">Plug the adapter into your car's OBD2 port, then tap Scan.</p>
+      </div>
+
+      <button onclick="setupBtScan()" id="setup-scan-btn"
+        class="w-full bg-zinc-900 border border-zinc-800 text-white font-semibold py-3 rounded-xl hover:border-zinc-700 transition-all flex items-center justify-center gap-2 mb-4">
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>
+        Scan for Devices
+      </button>
+
+      <div id="setup-scanning" class="hidden flex items-center justify-center gap-2 py-6 text-sm text-zinc-400">
+        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+        Scanning for Bluetooth devices...
+      </div>
+
+      <div id="setup-devices" class="space-y-1.5 mb-4"></div>
+
+      <div id="setup-bt-error" class="hidden text-xs text-zinc-500 text-center py-4"></div>
+
+      <div class="flex gap-2 mt-4">
+        <button onclick="goStep(1)" class="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-400 font-semibold py-3 rounded-xl hover:text-white transition-colors">Back</button>
+        <button onclick="goStep(3)" id="setup-next-2" disabled
+          class="flex-1 bg-acc text-white font-bold py-3 rounded-xl transition-opacity disabled:opacity-30">Next</button>
+      </div>
+    </div>
+
+    <!-- Step 3: WiFi Password -->
+    <div class="step fade-in" data-step="3">
+      <div class="mb-6">
+        <div class="text-xs font-semibold text-acc uppercase tracking-wider mb-1">Step 2 of 2</div>
+        <h2 class="text-xl font-bold mb-1">Secure Your WiFi</h2>
+        <p class="text-sm text-zinc-400">Set a password for the SignalKit WiFi network, or leave blank to keep it open.</p>
+      </div>
+
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-3">
+        <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Network Name</label>
+        <input type="text" id="setup-ssid" value="{{ ssid }}"
+          class="w-full bg-black/30 border border-zinc-700 text-zinc-100 text-sm p-2.5 rounded-lg mt-1.5 focus:outline-none focus:border-acc">
+      </div>
+
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-6">
+        <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Password</label>
+        <input type="text" id="setup-wifi-pass" placeholder="Leave blank for open network"
+          class="w-full bg-black/30 border border-zinc-700 text-zinc-100 text-sm p-2.5 rounded-lg mt-1.5 focus:outline-none focus:border-acc">
+        <div class="text-xs text-zinc-500 mt-1.5">Must be 8+ characters if set.</div>
+      </div>
+
+      <div class="flex gap-2">
+        <button onclick="goStep(2)" class="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-400 font-semibold py-3 rounded-xl hover:text-white transition-colors">Back</button>
+        <button onclick="finishSetup()" id="setup-finish-btn"
+          class="flex-1 bg-acc text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity">Finish Setup</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Done -->
+    <div class="step fade-in" data-step="4">
+      <div class="text-center py-8">
+        <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-emerald-500/15 flex items-center justify-center">
+          <svg class="w-8 h-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        </div>
+        <h2 class="text-2xl font-bold mb-2">You're All Set!</h2>
+        <p class="text-sm text-zinc-400 leading-relaxed mb-6">SignalKit is configured and ready. Start your engine to see live data.</p>
+        <div id="setup-summary" class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-6 text-left space-y-2">
+          <div class="flex justify-between text-sm"><span class="text-zinc-500">Adapter</span><span class="font-mono" id="summary-mac">--</span></div>
+          <div class="flex justify-between text-sm"><span class="text-zinc-500">WiFi</span><span id="summary-wifi">--</span></div>
+        </div>
+        <div class="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 mb-6" id="setup-reboot-notice">
+          SignalKit will restart to apply your settings. This takes about 15 seconds.
+        </div>
+        <a href="/" class="block w-full bg-acc text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity text-center">Open Dashboard</a>
+      </div>
+    </div>
+
+  </div>
+{% endblock %}
+
+{% block footer %}{% endblock %}
+
+{% block scripts %}
+  <script>
+    let selectedMac = null;
+
+    function goStep(n) {
+      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+      const step = document.querySelector('[data-step="' + n + '"]');
+      if (step) step.classList.add('active');
+    }
+
+    // Show the connected phone's name on the welcome screen
+    async function showConnectedDevice() {
+      try {
+        const resp = await fetch('/api/wifi-clients');
+        const data = await resp.json();
+        if (data.ok && data.clients.length > 0) {
+          // Find the client that's making this request (most likely the first/only one)
+          const client = data.clients.find(c => c.hostname) || data.clients[0];
+          const name = client.hostname || 'Unknown Device';
+          const el = document.getElementById('connected-device');
+          document.getElementById('device-name').textContent = name;
+          el.classList.remove('hidden');
+        }
+      } catch(e) {}
+    }
+    showConnectedDevice();
+
+    async function setupBtScan() {
+      const btn = document.getElementById('setup-scan-btn');
+      const spinner = document.getElementById('setup-scanning');
+      const list = document.getElementById('setup-devices');
+      const errDiv = document.getElementById('setup-bt-error');
+
+      btn.disabled = true;
+      btn.classList.add('opacity-50');
+      spinner.classList.remove('hidden');
+      list.innerHTML = '';
+      errDiv.classList.add('hidden');
+
+      try {
+        const resp = await fetch('/api/bt-scan', { method: 'POST' });
+        const data = await resp.json();
+        spinner.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+
+        if (!data.ok || data.devices.length === 0) {
+          errDiv.textContent = data.error || 'No devices found. Make sure your OBD2 adapter is plugged in and powered on.';
+          errDiv.classList.remove('hidden');
+          return;
+        }
+
+        list.innerHTML = data.devices.map(d => `
+          <button onclick="selectAdapter('${d.mac}','${d.name.replace(/'/g, "\\\\'")}')" data-mac="${d.mac}"
+            class="w-full flex items-center gap-2.5 ${d.obd ? 'bg-acc/5 border-acc/30' : 'bg-black/30 border-zinc-700'} border rounded-xl px-3.5 py-3 text-left transition-all hover:border-zinc-500">
+            <svg class="w-5 h-5 ${d.obd ? 'text-acc' : 'text-zinc-600'} shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium truncate">${d.name}${d.obd ? ' <span class="inline-block text-[0.6rem] font-bold bg-acc/20 text-acc px-1.5 py-0.5 rounded ml-1.5 align-middle">OBD</span>' : ''}</div>
+              <div class="text-xs font-mono text-zinc-500">${d.mac}</div>
+            </div>
+          </button>
+        `).join('');
+      } catch(e) {
+        spinner.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+        errDiv.textContent = 'Network error during scan.';
+        errDiv.classList.remove('hidden');
+      }
+    }
+
+    async function selectAdapter(mac, name) {
+      // Highlight selected adapter
+      document.querySelectorAll('#setup-devices button').forEach(b => {
+        if (b.dataset.mac === mac) {
+          b.className = b.className.replace('border-zinc-700', 'border-acc bg-acc/10');
+          b.querySelector('svg').className = 'w-5 h-5 text-acc shrink-0';
+        } else {
+          b.className = b.className.replace('border-acc bg-acc/10', 'border-zinc-700');
+          b.querySelector('svg').className = 'w-5 h-5 text-zinc-600 shrink-0';
+        }
+      });
+
+      // Pair immediately while device is still discoverable
+      const errDiv = document.getElementById('setup-bt-error');
+      errDiv.classList.add('hidden');
+      const btn = document.querySelector(`[data-mac="${mac}"]`);
+      if (btn) {
+        const origText = btn.querySelector('.text-sm').innerHTML;
+        btn.querySelector('.text-sm').innerHTML = 'Pairing...';
+        btn.disabled = true;
+        try {
+          const resp = await fetch('/api/bt-pair', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac }),
+          });
+          const data = await resp.json();
+          btn.disabled = false;
+          if (data.ok) {
+            btn.querySelector('.text-sm').innerHTML = origText.replace(name, name + ' <span class="inline-block text-[0.6rem] font-bold bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded ml-1.5 align-middle">PAIRED</span>');
+            selectedMac = mac;
+            document.getElementById('setup-next-2').disabled = false;
+          } else {
+            btn.querySelector('.text-sm').innerHTML = origText;
+            errDiv.textContent = data.error || 'Pairing failed. Make sure the adapter is on.';
+            errDiv.classList.remove('hidden');
+          }
+        } catch(e) {
+          btn.disabled = false;
+          btn.querySelector('.text-sm').innerHTML = origText;
+          errDiv.textContent = 'Network error during pairing.';
+          errDiv.classList.remove('hidden');
+        }
+      }
+    }
+
+    async function finishSetup() {
+      const btn = document.getElementById('setup-finish-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      const ssid = document.getElementById('setup-ssid').value.trim();
+      const pass = document.getElementById('setup-wifi-pass').value;
+
+      // Validate WiFi password
+      if (pass && pass.length < 8) {
+        alert('WiFi password must be at least 8 characters.');
+        btn.disabled = false;
+        btn.textContent = 'Finish Setup';
+        return;
+      }
+
+      // Save all settings
+      const settings = {};
+      if (selectedMac) settings['OBD_MAC'] = selectedMac;
+      if (ssid) settings['HOTSPOT_SSID'] = ssid;
+      settings['HOTSPOT_PASSWORD'] = pass;
+      settings['SETUP_COMPLETE'] = '1';
+
+      try {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settings),
+        });
+
+        // Show summary
+        document.getElementById('summary-mac').textContent = selectedMac || 'Not set';
+        document.getElementById('summary-wifi').textContent = pass ? ssid + ' (secured)' : ssid + ' (open)';
+        goStep(4);
+
+        // Trigger restart
+        setTimeout(() => fetch('/api/restart', { method: 'POST' }), 2000);
+      } catch(e) {
+        btn.disabled = false;
+        btn.textContent = 'Finish Setup';
+        alert('Failed to save settings. Please try again.');
+      }
+    }
+  </script>
+{% endblock %}

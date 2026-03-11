@@ -1,0 +1,311 @@
+{% extends 'base.html' %}
+{% block title %}SignalKit{% endblock %}
+
+{% block nav %}
+  <!-- Safety Disclaimer (shown once per device) -->
+  <div id="disclaimer" class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-6" style="display:none">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-sm w-full text-center">
+      <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-amber-500/15 flex items-center justify-center">
+        <svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+      </div>
+      <h2 class="text-lg font-bold mb-2">Drive Safely</h2>
+      <p class="text-sm text-zinc-400 leading-relaxed mb-5">SignalKit is for informational purposes only. Do not interact with this device while driving. The driver is responsible for safe vehicle operation at all times.</p>
+      <button onclick="dismissDisclaimer()" class="w-full bg-acc text-white font-bold py-2.5 rounded-xl hover:opacity-90 transition-opacity text-sm">I Understand</button>
+    </div>
+  </div>
+  <script>
+    function dismissDisclaimer() {
+      localStorage.setItem('signalkit_disclaimer', '1');
+      document.getElementById('disclaimer').style.display = 'none';
+    }
+    if (!localStorage.getItem('signalkit_disclaimer')) {
+      document.getElementById('disclaimer').style.display = 'flex';
+    }
+  </script>
+
+  {% include 'partials/nav.html' %}
+{% endblock %}
+
+{% block content %}
+  <!-- Status bar -->
+  <div class="flex items-center gap-2 px-4 h-8 bg-zinc-900 border-b border-zinc-800">
+    <span id="status-dot" class="w-[7px] h-[7px] rounded-full bg-red-500 shrink-0 transition-all"></span>
+    <span id="status-text" class="text-xs text-zinc-500">Connecting...</span>
+    <span id="sse-badge" class="ml-auto text-[0.58rem] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400">POLLING</span>
+  </div>
+
+  <!-- Trip Computer -->
+  <div class="flex items-center justify-between px-4 h-9 bg-zinc-900/50 border-b border-zinc-800 text-xs text-zinc-500">
+    <span class="font-semibold tracking-wider uppercase text-[0.6rem]" style="color:var(--accent)">Trip</span>
+    <div class="flex items-center gap-4 tabular-nums">
+      <span id="trip-time">--:--</span>
+      <span id="trip-dist">-- mi</span>
+      <span id="trip-avg-speed">-- mph</span>
+      <span id="trip-avg-mpg">-- mpg</span>
+      <span class="text-zinc-600">|</span>
+      <span id="version-badge" class="font-mono text-zinc-600">...</span>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div class="p-3 flex flex-col gap-2.5">
+    <!-- Hero row -->
+    <div class="grid grid-cols-2 gap-2.5">
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-center">
+        <div class="text-[0.65rem] font-semibold tracking-widest uppercase text-zinc-500 mb-2">RPM</div>
+        <div class="text-[3.2rem] font-extrabold leading-none tabular-nums" id="val-rpm">---</div>
+        <div class="h-1.5 bg-zinc-800 rounded-full overflow-hidden mt-2.5">
+          <div class="h-full rounded-full bg-gradient-to-r from-acc to-acc/60 transition-all duration-500" id="rpm-bar" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-center">
+        <div class="text-[0.65rem] font-semibold tracking-widest uppercase text-zinc-500 mb-2">Speed</div>
+        <div class="text-[3.2rem] font-extrabold leading-none tabular-nums" id="val-speed">---</div>
+        <div class="text-xs text-zinc-500 mt-1 font-medium" id="unit-speed">{{ 'km/h' if units_speed == 'kmh' else 'MPH' }}</div>
+      </div>
+    </div>
+
+    <!-- Metrics row -->
+    <div class="grid grid-cols-{{ layout_metrics|length }} gap-2.5 max-[440px]:grid-cols-2">
+      {% for card in layout_metrics %}
+      <div class="dcard bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-center transition-opacity" data-card="{{ card }}">
+        <div class="text-[0.65rem] font-semibold tracking-widest uppercase text-zinc-500 mb-2">{{ cards[card].label }}</div>
+        <div class="text-2xl font-bold tabular-nums transition-colors" id="{{ cards[card].val_id }}">{{ cards[card].default }}</div>
+        {% if cards[card].unit %}<div class="text-xs text-zinc-500 mt-1">{{ cards[card].unit }}</div>{% endif %}
+        {% if cards[card].extra_id %}<div class="text-xs text-zinc-500 mt-1" id="{{ cards[card].extra_id }}">---</div>{% endif %}
+        {% if cards[card].warn_id %}<div class="min-h-[14px] mt-1" id="{{ cards[card].warn_id }}"></div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Secondary row -->
+    <div class="grid grid-cols-{{ layout_slow|length }} gap-2.5 max-[440px]:grid-cols-2">
+      {% for card in layout_slow %}
+      <div class="dcard bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-center transition-opacity" data-card="{{ card }}">
+        <div class="text-[0.65rem] font-semibold tracking-widest uppercase text-zinc-500 mb-2">{{ cards[card].label }}</div>
+        <div class="text-xl font-bold tabular-nums transition-colors" id="{{ cards[card].val_id }}">{{ cards[card].default }}</div>
+        {% if cards[card].unit %}<div class="text-xs text-zinc-500 mt-1">{{ cards[card].unit }}</div>{% endif %}
+        {% if cards[card].extra_id %}<div class="text-xs text-zinc-500 mt-1" id="{{ cards[card].extra_id }}">---</div>{% endif %}
+        {% if cards[card].warn_id %}<div class="min-h-[14px] mt-1" id="{{ cards[card].warn_id }}"></div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- DTC section -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+      <div class="text-[0.65rem] font-semibold tracking-widest uppercase text-zinc-500 mb-2">Fault Codes</div>
+      <div id="dtc-list"><span class="text-sm text-emerald-500">No active fault codes</span></div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block footer %}
+  <div class="text-center py-4 text-xs text-zinc-600 border-t border-zinc-800">
+    SignalKit v{{ version }} &middot; <a href="/settings" class="text-zinc-400 hover:text-acc">Settings</a> &middot; {{ ip }}:{{ port }}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const REDLINE = {{ redline }};
+    const OVERHEAT_C = {{ overheat_c }};
+    const LOW_V = {{ low_v }};
+    const UNITS_SPEED = '{{ units_speed }}';
+    const UNITS_TEMP = '{{ units_temp }}';
+    let pollTimer = null;
+
+    // PID support detection — fade unsupported cards after connection
+    const _pidMap = {
+      coolant: 'coolant_temp', battery: 'battery_voltage', throttle: 'throttle',
+      load: 'engine_load', iat: 'intake_air_temp', oil: 'oil_temp',
+      fuel_trim: 'short_fuel_trim_1', mpg: 'mpg'
+    };
+    const _pidSeen = {};
+    let _connUpdates = 0;
+
+    // Fetch git version for testing badge
+    fetch('/api/version').then(r=>r.json()).then(d=>{
+      const vb = document.getElementById('version-badge');
+      if(vb && d.hash_short) {
+        vb.textContent = (d.ota_applied ? 'OTA ' : '') + d.hash_short;
+        vb.title = d.version || d.hash || '';
+      }
+    }).catch(()=>{});
+    function checkPidSupport(d) {
+      if (!d.connected) { _connUpdates = 0; return; }
+      _connUpdates++;
+      for (const [card, key] of Object.entries(_pidMap)) {
+        if (d[key] !== null && d[key] !== undefined) _pidSeen[card] = true;
+      }
+      if (_connUpdates >= 8) {
+        document.querySelectorAll('.dcard').forEach(el => {
+          const id = el.dataset.card;
+          if (id && !_pidSeen[id]) {
+            el.style.opacity = '0.3';
+            const valEl = el.querySelector('[id^="val-"]');
+            if (valEl && valEl.textContent === '---') valEl.textContent = 'N/A';
+          } else if (id) {
+            el.style.opacity = '1';
+          }
+        });
+      }
+    }
+
+    function fmt(val, dec=0, fb='---') {
+      return (val === null || val === undefined) ? fb : Number(val).toFixed(dec);
+    }
+    function toF(c) { return c * 9/5 + 32; }
+    function toKmh(mph) { return mph * 1.60934; }
+    function convSpeed(v) { return UNITS_SPEED === 'kmh' ? toKmh(v) : v; }
+    function convTemp(v) { return UNITS_TEMP === 'F' ? toF(v) : v; }
+    function setColor(el, cls) {
+      el.className = el.className.replace(/clr-\w+/g, '').trim();
+      if (cls) el.classList.add(cls);
+    }
+
+    function applyData(d) {
+      checkPidSupport(d);
+
+      const dot = document.getElementById('status-dot');
+      dot.style.background = d.connected ? '#22c55e' : '#ef4444';
+      dot.style.boxShadow = d.connected ? '0 0 6px #22c55e' : 'none';
+      document.getElementById('status-text').textContent = d.status || '';
+
+      // RPM
+      const rpmEl = document.getElementById('val-rpm');
+      rpmEl.textContent = d.rpm !== null ? d.rpm.toLocaleString() : '---';
+      const ratio = d.rpm ? Math.min(1, d.rpm / REDLINE) : 0;
+      const bar = document.getElementById('rpm-bar');
+      bar.style.width = (ratio * 100) + '%';
+      if (ratio >= 0.88) {
+        bar.className = 'h-full rounded-full bg-gradient-to-r from-amber-500 to-red-500 transition-all duration-500';
+        setColor(rpmEl, 'clr-danger');
+      } else if (ratio >= 0.7) {
+        bar.className = 'h-full rounded-full bg-gradient-to-r from-acc to-amber-500 transition-all duration-500';
+        setColor(rpmEl, '');
+      } else {
+        bar.className = 'h-full rounded-full bg-gradient-to-r from-acc to-acc/60 transition-all duration-500';
+        setColor(rpmEl, '');
+      }
+
+      document.getElementById('val-speed').textContent =
+        d.speed !== null ? fmt(convSpeed(d.speed), 0) : '---';
+      document.getElementById('val-throttle').textContent = fmt(d.throttle, 0);
+      document.getElementById('val-load').textContent = fmt(d.engine_load, 0);
+      document.getElementById('val-iat').textContent =
+        d.intake_air_temp !== null ? fmt(convTemp(d.intake_air_temp), 0) : '---';
+
+      // Coolant
+      const cEl = document.getElementById('val-coolant');
+      const wc = document.getElementById('warn-coolant');
+      cEl.textContent = d.coolant_temp !== null ? fmt(convTemp(d.coolant_temp), 0) : '---';
+      if (d.coolant_temp >= OVERHEAT_C) {
+        setColor(cEl, 'clr-danger');
+        wc.innerHTML = '<span class="inline-block bg-red-500/20 text-red-400 text-[0.6rem] font-bold px-2 py-0.5 rounded">OVERHEAT</span>';
+      } else if (d.coolant_temp >= 95) {
+        setColor(cEl, 'clr-warn');
+        wc.innerHTML = '<span class="inline-block bg-amber-500/20 text-amber-400 text-[0.6rem] font-bold px-2 py-0.5 rounded">HIGH</span>';
+      } else {
+        setColor(cEl, 'clr-good'); wc.innerHTML = '';
+      }
+
+      // Battery
+      const bEl = document.getElementById('val-battery');
+      const wb = document.getElementById('warn-battery');
+      bEl.textContent = fmt(d.battery_voltage, 2);
+      if (d.battery_voltage !== null && d.battery_voltage < LOW_V - 0.5) {
+        setColor(bEl, 'clr-danger');
+        wb.innerHTML = '<span class="inline-block bg-red-500/20 text-red-400 text-[0.6rem] font-bold px-2 py-0.5 rounded">CRITICAL</span>';
+      } else if (d.battery_voltage !== null && d.battery_voltage < LOW_V) {
+        setColor(bEl, 'clr-warn');
+        wb.innerHTML = '<span class="inline-block bg-amber-500/20 text-amber-400 text-[0.6rem] font-bold px-2 py-0.5 rounded">LOW</span>';
+      } else {
+        setColor(bEl, 'clr-good'); wb.innerHTML = '';
+      }
+
+      // Oil
+      const oEl = document.getElementById('val-oil');
+      oEl.textContent = d.oil_temp !== null ? fmt(convTemp(d.oil_temp), 0) : 'N/A';
+      setColor(oEl, d.oil_temp >= 130 ? 'clr-danger' : d.oil_temp >= 115 ? 'clr-warn' : '');
+
+      // Fuel trim
+      if (d.short_fuel_trim_1 !== null) {
+        const s = d.short_fuel_trim_1, l = d.long_fuel_trim_1;
+        const stEl = document.getElementById('val-stft');
+        stEl.textContent = 'S: ' + (s >= 0 ? '+' : '') + s.toFixed(1) + '%';
+        setColor(stEl, Math.abs(s) > 10 ? 'clr-warn' : '');
+        if (l !== null)
+          document.getElementById('val-ltft').textContent =
+            'L: ' + (l >= 0 ? '+' : '') + l.toFixed(1) + '%';
+      } else {
+        document.getElementById('val-stft').textContent = '---';
+        document.getElementById('val-ltft').textContent = '---';
+      }
+
+      // MPG
+      const mpgEl = document.getElementById('val-mpg');
+      if (d.mpg !== null && d.mpg !== undefined) {
+        mpgEl.textContent = Number(d.mpg).toFixed(1);
+        setColor(mpgEl, d.mpg >= 25 ? 'clr-good' : d.mpg >= 15 ? '' : 'clr-warn');
+      } else {
+        mpgEl.textContent = '---'; setColor(mpgEl, '');
+      }
+
+      // Trip computer
+      if (d.trip && d.trip.active) {
+        const s = d.trip.elapsed_s;
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        document.getElementById('trip-time').textContent =
+          h > 0 ? h + ':' + String(m).padStart(2, '0') : m + 'm';
+        document.getElementById('trip-dist').textContent =
+          d.trip.distance_mi.toFixed(1) + ' mi';
+        document.getElementById('trip-avg-speed').textContent =
+          d.trip.avg_speed_mph.toFixed(0) + ' mph';
+        document.getElementById('trip-avg-mpg').textContent =
+          d.trip.avg_mpg > 0 ? d.trip.avg_mpg.toFixed(1) + ' mpg' : '-- mpg';
+      }
+
+      // DTCs
+      const dtcList = document.getElementById('dtc-list');
+      if (!d.dtcs || !d.dtcs.length) {
+        dtcList.innerHTML = '<span class="text-sm text-emerald-500">No active fault codes</span>';
+      } else {
+        dtcList.innerHTML = d.dtcs.map(dtc =>
+          `<div class="flex items-center gap-3 bg-red-500/10 border border-red-500/15 rounded-lg p-2 mb-1.5 last:mb-0">
+            <span class="bg-red-500/20 text-red-400 text-xs font-bold font-mono px-2 py-0.5 rounded">${dtc.code}</span>
+            <span class="text-sm text-zinc-400">${dtc.description}</span>
+          </div>`).join('');
+      }
+    }
+
+    // --- SSE with fallback to polling ---
+    function startSSE() {
+      const badge = document.getElementById('sse-badge');
+      const es = new EventSource('/api/stream');
+      es.onopen = function() {
+        badge.textContent = 'LIVE';
+        badge.className = 'ml-auto text-[0.58rem] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400';
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      };
+      es.addEventListener('data', function(e) {
+        try { applyData(JSON.parse(e.data)); } catch(err) {}
+      });
+      es.onerror = function() {
+        badge.textContent = 'POLLING';
+        badge.className = 'ml-auto text-[0.58rem] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400';
+        es.close();
+        startPolling();
+        setTimeout(startSSE, 10000);
+      };
+    }
+
+    async function pollOnce() {
+      try { applyData(await fetch('/api/data').then(r => r.json())); } catch(e) {}
+    }
+    function startPolling() { if (!pollTimer) pollTimer = setInterval(pollOnce, 1000); }
+
+    pollOnce();
+    startSSE();
+  </script>
+{% endblock %}

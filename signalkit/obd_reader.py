@@ -748,6 +748,31 @@ def _parse_response_value(val):
         }
 
 
+def _make_pid_result(service, cmd, value=None, unit=None, raw="NO DATA", parsed=None):
+    """Build a standardised PID scan result dict.
+
+    Args:
+        service: OBD service number string (e.g. "01", "06").
+        cmd:     The python-OBD command object.
+        value:   Parsed value (or None for no-data / error).
+        unit:    Unit string (or None).
+        raw:     Raw response string.
+        parsed:  If provided, a dict from _parse_response_value() whose keys
+                 override value/unit/raw.
+    """
+    entry = {
+        "service": service,
+        "pid": cmd.name if hasattr(cmd, 'name') else str(cmd),
+        "desc": cmd.desc if hasattr(cmd, 'desc') else "",
+        "value": value,
+        "unit": unit,
+        "raw": raw,
+    }
+    if parsed:
+        entry.update(parsed)
+    return entry
+
+
 def _scan_standard_pids(connection):
     """Scan all supported standard PIDs (Services 01, 02, 03, 07, 09).
 
@@ -781,31 +806,12 @@ def _scan_standard_pids(connection):
         try:
             response = _query_with_timeout(connection, cmd, force=True)
             if response.is_null():
-                results.append({
-                    "service": service,
-                    "pid": cmd_name,
-                    "desc": cmd.desc if hasattr(cmd, 'desc') else "",
-                    "value": None,
-                    "unit": None,
-                    "raw": "NO DATA",
-                })
+                results.append(_make_pid_result(service, cmd))
             else:
-                parsed = _parse_response_value(response.value)
-                results.append({
-                    "service": service,
-                    "pid": cmd_name,
-                    "desc": cmd.desc if hasattr(cmd, 'desc') else "",
-                    **parsed,
-                })
+                results.append(_make_pid_result(
+                    service, cmd, parsed=_parse_response_value(response.value)))
         except Exception as e:
-            results.append({
-                "service": service,
-                "pid": cmd_name,
-                "desc": cmd.desc if hasattr(cmd, 'desc') else "",
-                "value": None,
-                "unit": None,
-                "raw": f"ERROR: {e}",
-            })
+            results.append(_make_pid_result(service, cmd, raw=f"ERROR: {e}"))
 
     return results
 
@@ -833,32 +839,13 @@ def _scan_mode06_monitors(connection):
         try:
             response = _query_with_timeout(connection, cmd, force=True, timeout=3)
             if response.is_null():
-                results.append({
-                    "service": "06",
-                    "pid": cmd.name,
-                    "desc": cmd.desc if hasattr(cmd, 'desc') else "",
-                    "value": None,
-                    "unit": None,
-                    "raw": "NO DATA",
-                })
+                results.append(_make_pid_result("06", cmd))
             else:
-                parsed = _parse_response_value(response.value)
-                results.append({
-                    "service": "06",
-                    "pid": cmd.name,
-                    "desc": cmd.desc if hasattr(cmd, 'desc') else "",
-                    **parsed,
-                })
+                results.append(_make_pid_result(
+                    "06", cmd, parsed=_parse_response_value(response.value)))
         except Exception as e:
             logger.debug(f"Mode 06 monitor {cmd.name} failed: {e}")
-            results.append({
-                "service": "06",
-                "pid": cmd.name,
-                "desc": cmd.desc if hasattr(cmd, 'desc') else "",
-                "value": None,
-                "unit": None,
-                "raw": f"ERROR: {e}",
-            })
+            results.append(_make_pid_result("06", cmd, raw=f"ERROR: {e}"))
 
     logger.info(f"Service 06 scan complete: {len(results)} monitors")
     return results
@@ -1157,11 +1144,7 @@ def _scan_all_pids(connection):
     monitors = _scan_mode06_monitors(connection)
     logger.info(f"Service 06 scan: {len(monitors)} monitors")
 
-    # Mode 22 extended PIDs
-    extended = _scan_mode22_pids(connection)
-    logger.info(f"Extended scan (Mode 22): {len(extended)} PIDs")
-
-    all_pids = standard + monitors + extended
+    all_pids = standard + monitors
 
     # Group by service
     by_service = {}
@@ -1178,7 +1161,7 @@ def _scan_all_pids(connection):
         _pid_snapshot["total"] = len(all_pids)
 
     _update("status", "Connected")
-    logger.info(f"Full PID scan complete: {len(standard) + len(extended)} total PIDs across {len(by_service)} services")
+    logger.info(f"Full PID scan complete: {len(all_pids)} total PIDs across {len(by_service)} services")
 
 
 class OBDReader(threading.Thread):

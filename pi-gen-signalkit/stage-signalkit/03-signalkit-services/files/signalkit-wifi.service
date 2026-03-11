@@ -1,0 +1,24 @@
+[Unit]
+Description=SignalKit WiFi hotspot configuration
+Before=hostapd.service dnsmasq.service
+After=network-pre.target sys-subsystem-net-devices-wlan0.device
+Wants=sys-subsystem-net-devices-wlan0.device
+
+[Service]
+Type=oneshot
+# Ensure NetworkManager has released wlan0 (it reads unmanaged config on reload)
+ExecStartPre=/bin/bash -c 'command -v nmcli >/dev/null && nmcli device set wlan0 managed no 2>/dev/null || true'
+# Unblock WiFi radio — at early boot, rfkill may still have wlan0 soft-blocked
+ExecStartPre=/usr/sbin/rfkill unblock wifi
+# Small delay to let the driver finish unblocking
+ExecStartPre=/bin/sleep 1
+ExecStartPre=/sbin/ip link set wlan0 up
+ExecStartPre=/bin/bash -c '/sbin/ip addr show wlan0 | grep -q 192.168.4.1 || /sbin/ip addr add 192.168.4.1/24 dev wlan0'
+ExecStart=/opt/signalkit/scripts/signalkit-gen-hostapd.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=signalkit-wifi
+
+[Install]
+WantedBy=multi-user.target

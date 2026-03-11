@@ -1,0 +1,74 @@
+# =============================================================================
+# pi-gen build configuration for SignalKit AirPlay OS
+# =============================================================================
+# This file is sourced by pi-gen's build.sh.
+# Reference: https://github.com/RPi-Distro/pi-gen
+#
+# Build produces a Raspberry Pi OS Lite image with SignalKit + AirPlay
+# pre-installed. Boots directly into the dashboard with AirPlay receiver
+# available for screen mirroring from iPhone/iPad.
+#
+# Target hardware: Raspberry Pi 5 (64-bit, aarch64)
+# =============================================================================
+
+# Image name — output will be: SignalKit-AirPlay-YYYY-MM-DD.img
+IMG_NAME="SignalKit-AirPlay"
+
+# Debian release base. "bookworm" = Raspberry Pi OS 2023+ (current stable).
+RELEASE="bookworm"
+
+# Also produce a compressed .zip of the image for easy distribution
+DEPLOY_ZIP=1
+
+# --- Locale / Region ---
+# Change these to match your region
+LOCALE_DEFAULT="en_US.UTF-8"
+TIMEZONE_DEFAULT="America/Chicago"
+KEYBOARD_KEYMAP="us"
+KEYBOARD_LAYOUT="English (US)"
+
+# --- User account ---
+# The single system user. SignalKit runs as this user.
+FIRST_USER_NAME="pi"
+FIRST_USER_PASS="signalkit"      # Change this if you care about SSH security
+DISABLE_FIRST_BOOT_USER_RENAME=1
+
+# --- SSH ---
+# Disabled by default — this is an embedded device, not a server.
+# Set to 1 only for development builds.
+ENABLE_SSH=1
+
+# --- WiFi ---
+# Leave blank — we use wlan0 as the hotspot AP, not a WiFi client.
+# If you need internet during builds, set these temporarily.
+WPA_ESSID=""
+WPA_PASSWORD=""
+WPA_COUNTRY="US"
+
+# --- Cloud-init ---
+# Not needed for an embedded dashboard
+ENABLE_CLOUD_INIT=0
+
+# --- Architecture ---
+# Pi 5 is 64-bit (aarch64). Build a 64-bit image.
+# Requires the arm64 branch of pi-gen or setting this variable.
+TARGET_ARCH=arm64
+
+# --- Build stages ---
+# stage0 = bootstrap (base Debian)
+# stage1 = minimal Linux (no X, no GUI)
+# stage2 = Raspberry Pi OS Lite (network, Bluetooth, SSH base)
+# stage-airplay = our custom stage (SignalKit + AirPlay, hotspot, display)
+#
+# We deliberately skip stages 3 (full desktop), 4 (recommended apps), 5 (extras).
+STAGE_LIST="stage0 stage1 stage2 stage-airplay export-image"
+
+# --- Export format ---
+# "lite" = compressed image only (no NOOBS format)
+EXPORT_NOOBS=0
+
+# --- Build speed ---
+# Skip stages that already completed successfully (comment out for a full clean build)
+CONTINUE=1
+# Use RAM for work directory — cuts build time ~50% if you have 6+ GB free RAM
+# WORK_DIR=/tmp/pi-gen-work

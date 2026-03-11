@@ -1,0 +1,28 @@
+[Unit]
+Description=SignalKit rfcomm bind (OBD2 Bluetooth serial port)
+After=bluetooth.target
+Wants=bluetooth.target
+# Run before the main SignalKit app
+Before=signalkit.service
+
+[Service]
+Type=oneshot
+# Unblock Bluetooth radio — rfkill may have it soft-blocked at boot
+ExecStartPre=/usr/sbin/rfkill unblock bluetooth
+# Read OBD_MAC from config — extract it with Python so we don't duplicate it
+ExecStartPre=/bin/bash -c 'OBD_MAC=$(python3 -c "import sys; sys.path.insert(0, \"/opt/signalkit/signalkit\"); import config; print(config.OBD_MAC)"); echo "rfcomm binding MAC: $OBD_MAC"'
+ExecStart=/bin/bash -c '\
+    OBD_MAC=$(python3 -c "import sys; sys.path.insert(0, \"/opt/signalkit/signalkit\"); import config; print(config.OBD_MAC)"); \
+    CHANNEL=$(python3 -c "import sys; sys.path.insert(0, \"/opt/signalkit/signalkit\"); import config; print(config.OBD_BT_CHANNEL)"); \
+    rfcomm bind /dev/rfcomm0 "$OBD_MAC" "$CHANNEL" || true'
+
+# Remain active so signalkit.service can depend on it
+RemainAfterExit=yes
+
+# If rfcomm fails, signalkit.service still starts — it handles reconnection internally
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=signalkit-rfcomm
+
+[Install]
+WantedBy=multi-user.target

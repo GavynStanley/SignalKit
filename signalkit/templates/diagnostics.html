@@ -1,0 +1,191 @@
+{% extends 'base.html' %}
+{% block title %}SignalKit Diagnostics{% endblock %}
+
+{% block content %}
+  <div class="max-w-[600px] mx-auto p-4">
+
+    <!-- Connection Status -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-3.5">
+      <h2 class="text-base font-bold mb-3 flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full" id="diag-dot"></span>
+        Connection Status
+      </h2>
+      <div id="diag-status" class="text-sm text-zinc-400 mb-4">Loading...</div>
+
+      <div class="space-y-0">
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Bluetooth MAC</span>
+          <span class="text-sm font-mono" id="diag-mac">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Serial Port</span>
+          <span class="text-sm font-mono" id="diag-port">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">RFCOMM Channel</span>
+          <span class="text-sm font-mono" id="diag-channel">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">OBD Protocol</span>
+          <span class="text-sm font-mono" id="diag-protocol">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">ELM327 Version</span>
+          <span class="text-sm font-mono" id="diag-elm">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Connection Attempts</span>
+          <span class="text-sm font-mono" id="diag-attempts">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Poll Errors</span>
+          <span class="text-sm font-mono" id="diag-errors">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Supported PIDs -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-3.5">
+      <h2 class="text-base font-bold mb-1">Supported PIDs</h2>
+      <p class="text-sm text-zinc-500 mb-3">Commands reported as supported by the vehicle's ECU.</p>
+      <div id="diag-pids" class="text-sm text-zinc-400">Loading...</div>
+    </div>
+
+    <!-- System Info -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-3.5">
+      <h2 class="text-base font-bold mb-3">System Info</h2>
+      <div class="space-y-0">
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">CPU Temp</span>
+          <span class="text-sm font-mono" id="sys-cpu-temp">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Memory Usage</span>
+          <span class="text-sm font-mono" id="sys-memory">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Uptime</span>
+          <span class="text-sm font-mono" id="sys-uptime">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Core Voltage</span>
+          <span class="text-sm font-mono" id="sys-voltage">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">CPU Clock</span>
+          <span class="text-sm font-mono" id="sys-clock">--</span>
+        </div>
+        <div class="flex justify-between items-center py-2.5 border-t border-zinc-800">
+          <span class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Power Status</span>
+          <span class="text-sm font-mono" id="sys-power">--</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+    <!-- Bluetooth Logs -->
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-3.5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-base font-bold flex items-center gap-2">
+          <svg class="w-4 h-4 text-acc" fill="currentColor" viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>
+          Bluetooth Logs
+        </h2>
+        <button onclick="loadBtLogs()" class="text-xs text-acc hover:opacity-80 font-semibold">Refresh</button>
+      </div>
+      <div id="bt-logs" class="bg-black/40 border border-zinc-800 rounded-lg p-3 max-h-[300px] overflow-y-auto font-mono text-[0.7rem] leading-relaxed text-zinc-400 space-y-0.5">
+        Loading...
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    async function loadBtLogs() {
+      try {
+        const r = await fetch('/api/bt-logs');
+        const d = await r.json();
+        const el = document.getElementById('bt-logs');
+        if (d.ok && d.lines.length > 0) {
+          el.innerHTML = d.lines.map(line => {
+            let cls = 'text-zinc-500';
+            if (line.includes('ERROR') || line.includes('error') || line.includes('Failed'))
+              cls = 'text-red-400';
+            else if (line.includes('WARNING') || line.includes('warning') || line.includes('timeout'))
+              cls = 'text-amber-400';
+            else if (line.includes('Connected') || line.includes('success') || line.includes('bound'))
+              cls = 'text-emerald-400';
+            else if (line.includes('INFO'))
+              cls = 'text-zinc-400';
+            return `<div class="${cls}">${line.replace(/</g, '&lt;')}</div>`;
+          }).join('');
+          el.scrollTop = el.scrollHeight;
+        } else {
+          el.innerHTML = '<div class="text-zinc-600">No Bluetooth logs available</div>';
+        }
+      } catch(e) {
+        document.getElementById('bt-logs').innerHTML = '<div class="text-red-400">Failed to load logs</div>';
+      }
+    }
+
+    async function loadDiagnostics() {
+      try {
+        const r = await fetch('/api/diagnostics');
+        const d = await r.json();
+
+        // Connection status
+        const dot = document.getElementById('diag-dot');
+        const status = document.getElementById('diag-status');
+        if (d.connected) {
+          dot.style.background = '#22c55e';
+          dot.style.boxShadow = '0 0 6px #22c55e';
+          status.textContent = d.status;
+          status.className = 'text-sm text-emerald-400 mb-4 font-semibold';
+        } else {
+          dot.style.background = '#ef4444';
+          dot.style.boxShadow = '0 0 6px #ef4444';
+          status.textContent = d.status || 'Disconnected';
+          status.className = 'text-sm text-red-400 mb-4 font-semibold';
+        }
+
+        document.getElementById('diag-mac').textContent = d.bt_mac || '--';
+        document.getElementById('diag-port').textContent = d.bt_port || '--';
+        document.getElementById('diag-channel').textContent = d.bt_channel || '--';
+        document.getElementById('diag-protocol').textContent = d.protocol || '--';
+        document.getElementById('diag-elm').textContent = d.elm_version || '--';
+        document.getElementById('diag-attempts').textContent = d.connection_attempts || '0';
+        document.getElementById('diag-errors').textContent = d.poll_errors || '0';
+
+        // PIDs
+        const pidsDiv = document.getElementById('diag-pids');
+        if (d.supported_pids && d.supported_pids.length > 0) {
+          pidsDiv.innerHTML = '<div class="flex flex-wrap gap-1.5">' +
+            d.supported_pids.map(pid =>
+              `<span class="bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-mono px-2 py-1 rounded-md">${pid}</span>`
+            ).join('') + '</div>';
+        } else {
+          pidsDiv.innerHTML = '<span class="text-zinc-500">Not connected — PIDs will appear after connecting to the adapter.</span>';
+        }
+
+        // System info
+        if (d.system) {
+          document.getElementById('sys-cpu-temp').textContent = d.system.cpu_temp || '--';
+          document.getElementById('sys-memory').textContent = d.system.memory || '--';
+          document.getElementById('sys-uptime').textContent = d.system.uptime || '--';
+          document.getElementById('sys-voltage').textContent = d.system.voltage || '--';
+          document.getElementById('sys-clock').textContent = d.system.clock_speed || '--';
+          const powerEl = document.getElementById('sys-power');
+          powerEl.textContent = d.system.power_status || '--';
+          powerEl.className = 'text-sm font-mono ' + (d.system.power_status === 'OK' ? 'text-emerald-400' : 'text-red-400');
+        }
+      } catch(e) {
+        document.getElementById('diag-status').textContent = 'Failed to load diagnostics';
+      }
+    }
+
+    loadDiagnostics();
+    loadBtLogs();
+    setInterval(loadDiagnostics, 5000);
+    setInterval(loadBtLogs, 10000);
+  </script>
+{% endblock %}

@@ -209,7 +209,7 @@ hdmi_drive=2
 # Disable overscan (black borders) — our display fills edge-to-edge
 disable_overscan=1
 
-# GPU memory — enough VRAM for WebKit/X11 rendering
+# GPU memory — Qt EGLFS uses GPU for rendering
 gpu_mem=128
 
 # Disable HDMI CEC — prevents external devices from sending
@@ -324,18 +324,7 @@ SUBSYSTEM=="drm", MODE="0660", GROUP="render"
 EOF
 
 # ---------------------------------------------------------------------------
-# 13. Set Kivy environment for headless display in pi user's profile
-# ---------------------------------------------------------------------------
-cat >> "${ROOTFS_DIR}/home/pi/.bashrc" << 'EOF'
-
-# SignalKit: Kivy uses SDL2 with DRM/KMS backend (no X11 desktop)
-export KIVY_BCM_DISPMANX_ID=2
-EOF
-
-# Same for the service environment — done in the service file itself
-
-# ---------------------------------------------------------------------------
-# 14. Custom MOTD — replace default Debian banner with SignalKit info
+# 13. Custom MOTD — replace default Debian banner with SignalKit info
 # ---------------------------------------------------------------------------
 # Remove all default MOTD sources
 on_chroot << 'EOF'

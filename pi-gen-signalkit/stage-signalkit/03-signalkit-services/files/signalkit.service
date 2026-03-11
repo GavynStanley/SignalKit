@@ -1,0 +1,42 @@
+[Unit]
+Description=SignalKit OBD2 Dashboard (Qt/QML)
+Documentation=file:///opt/signalkit/README.md
+
+# No X11 needed — Qt EGLFS renders directly to the framebuffer
+After=network.target bluetooth.target signalkit-rfcomm.service hostapd.service dnsmasq.service
+Wants=bluetooth.target hostapd.service dnsmasq.service
+Requires=signalkit-rfcomm.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/signalkit/signalkit
+
+# Qt EGLFS: render directly to /dev/fb0 via DRM/KMS — no X11, no Wayland
+ExecStart=/usr/bin/python3 /opt/signalkit/signalkit/qml_display.py -platform eglfs
+
+# Restart on crash — critical for an always-on embedded device
+Restart=always
+RestartSec=5
+
+# Qt EGLFS configuration
+Environment=QT_QPA_PLATFORM=eglfs
+Environment=QT_QPA_EGLFS_INTEGRATION=eglfs_kms
+Environment=QT_QPA_EGLFS_KMS_ATOMIC=1
+Environment=QT_QPA_EGLFS_HIDECURSOR=1
+
+# Unbuffered Python output so logs appear in journalctl in real time
+Environment=PYTHONUNBUFFERED=1
+
+# Groups needed: video (framebuffer/DRM), bluetooth (rfcomm), dialout (/dev/rfcomm0)
+SupplementaryGroups=video bluetooth dialout render input
+
+# Kill cleanly on systemctl stop
+TimeoutStopSec=10
+KillSignal=SIGTERM
+
+SyslogIdentifier=signalkit
+
+[Install]
+WantedBy=multi-user.target
