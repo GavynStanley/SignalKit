@@ -60,9 +60,11 @@ done
 
 step "Pre-flight checks"
 
-# Check vendored pi-gen exists
-[[ -d "${PIGEN_DIR}" ]] || err "Vendored pi-gen not found: ${PIGEN_DIR}"
-[[ -f "${PIGEN_DIR}/build.sh" ]] || err "pi-gen/build.sh not found — is pi-gen vendored correctly?"
+# Check vendored pi-gen exists — clone if missing
+if [[ ! -d "${PIGEN_DIR}" ]] || [[ ! -f "${PIGEN_DIR}/build.sh" ]]; then
+    log "pi-gen not found — cloning from GitHub..."
+    git clone --depth=1 https://github.com/RPi-Distro/pi-gen.git "${PIGEN_DIR}"
+fi
 
 # Check config file exists
 [[ -f "${CONFIG}" ]] || err "Config not found: ${CONFIG}"
