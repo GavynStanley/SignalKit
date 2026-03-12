@@ -44,6 +44,16 @@ EOF
 on_chroot << 'EOF'
 echo "Removing unnecessary packages..."
 
+# Mark Qt/PyQt packages as manually installed so autoremove won't purge them
+apt-mark manual \
+    python3-pyqt6 python3-pyqt6.qtquick python3-pyqt6.qtqml \
+    qt6-qpa-plugins libqt6quick6 libqt6qml6 libqt6core6 libqt6gui6 \
+    libqt6network6 libqt6opengl6 libqt6svg6 libqt6widgets6 \
+    qml6-module-qtquick qml6-module-qtquick-controls \
+    qml6-module-qtquick-layouts qml6-module-qtquick-templates \
+    qml6-module-qtquick-window \
+    2>/dev/null || true
+
 # Services/daemons we don't need (may or may not be present)
 apt-get remove -y --purge \
     triggerhappy rsyslog dphys-swapfile \
@@ -62,7 +72,7 @@ apt-get remove -y --purge \
     pcmanfm desktop-file-utils \
     2>/dev/null || true
 
-# Clean up
+# Clean up — autoremove won't touch Qt since we marked it manual above
 apt-get autoremove -y --purge
 apt-get clean
 rm -rf /var/lib/apt/lists/*

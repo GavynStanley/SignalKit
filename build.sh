@@ -109,6 +109,9 @@ else
         sudo rm -rf "${PIGEN_STAGE_LINK}"
     fi
     sudo ln -sf "${STAGE_DIR}" "${PIGEN_STAGE_LINK}"
+    # Also copy config into pi-gen dir so it's found as the default config
+    # (belt-and-suspenders with the -c flag)
+    sudo cp "${CONFIG}" "${PIGEN_DIR}/config"
     log "Linked: ${PIGEN_STAGE_LINK} -> ${STAGE_DIR}"
 fi
 
